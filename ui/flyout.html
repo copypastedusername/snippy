@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Snippy capture</title>
+    <link rel="stylesheet" href="styles/theme.css">
+    <link rel="stylesheet" href="styles/flyout.css">
+    <script src="scripts/flyout.js" defer></script>
+  </head>
+  <body>
+    <main id="flyout" class="flyout-card is-empty" aria-live="polite" aria-atomic="true">
+      <div id="preview" class="preview">
+        <img id="thumbnail" class="thumbnail" alt="Captured screenshot preview" draggable="false">
+        <div id="error-visual" class="error-visual" aria-hidden="true" hidden>
+          <svg class="icon" width="28" height="28" aria-hidden="true"><use href="icons.svg#alert"></use></svg>
+        </div>
+        <div id="update-visual" class="update-visual" aria-hidden="true" hidden>
+          <svg class="icon" width="36" height="36" aria-hidden="true"><use href="icons.svg#logo"></use></svg>
+        </div>
+      </div>
+
+      <section class="summary" aria-labelledby="flyout-title">
+        <h1 id="flyout-title" class="title">Snippet saved</h1>
+        <p id="detail" class="detail"></p>
+      </section>
+
+      <button id="close" class="btn subtle icon close" type="button" aria-label="Close" title="Close">
+        <svg class="icon" width="16" height="16" aria-hidden="true"><use href="icons.svg#close"></use></svg>
+      </button>
+
+      <div id="actions" class="actions" role="group" aria-label="Capture actions">
+        <button id="edit" class="btn subtle action" type="button">
+          <svg class="icon" width="16" height="16" aria-hidden="true"><use href="icons.svg#edit"></use></svg>
+          <span>Edit</span>
+        </button>
+        <button id="open" class="btn subtle action" type="button">
+          <svg class="icon" width="16" height="16" aria-hidden="true"><use href="icons.svg#open"></use></svg>
+          <span>Open</span>
+        </button>
+        <button id="folder" class="btn subtle action" type="button">
+          <svg class="icon" width="16" height="16" aria-hidden="true"><use href="icons.svg#folder"></use></svg>
+          <span>Folder</span>
+        </button>
+        <button id="copy" class="btn subtle action" type="button">
+          <svg class="icon" width="16" height="16" aria-hidden="true"><use href="icons.svg#copy"></use></svg>
+          <span>Copy</span>
+        </button>
+        <button id="delete" class="btn subtle action delete" type="button" title="Move to the Recycle Bin">
+          <svg class="icon" width="16" height="16" aria-hidden="true"><use href="icons.svg#delete"></use></svg>
+          <span>Delete</span>
+        </button>
+      </div>
+
+      <div id="update-actions" class="actions update-actions" role="group" aria-label="Update actions" hidden>
+        <button id="update-now" class="btn accent action" type="button">Update now</button>
+        <button id="update-later" class="btn subtle action" type="button">Later</button>
+      </div>
+
+      <div id="progress" class="progress" aria-hidden="true">
+        <span class="progress-fill"></span>
+      </div>
+    </main>
+  </body>
+</html>

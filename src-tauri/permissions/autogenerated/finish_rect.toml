@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-finish-rect"
+description = "Enables the finish_rect command without any pre-configured scope."
+commands.allow = ["finish_rect"]
+
+[[permission]]
+identifier = "deny-finish-rect"
+description = "Denies the finish_rect command without any pre-configured scope."
+commands.deny = ["finish_rect"]

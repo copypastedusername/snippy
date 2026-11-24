@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-finish-freeform"
+description = "Enables the finish_freeform command without any pre-configured scope."
+commands.allow = ["finish_freeform"]
+
+[[permission]]
+identifier = "deny-finish-freeform"
+description = "Denies the finish_freeform command without any pre-configured scope."
+commands.deny = ["finish_freeform"]

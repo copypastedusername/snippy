@@ -1,0 +1,311 @@
+/* Snippy design tokens — Windows 11 Fluent.
+   Owned by the design pass; screens consume these variables and must not redefine colours. */
+
+:root {
+  --font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI Semibold", "Segoe UI", system-ui, sans-serif;
+
+  --text-caption: 12px;
+  --text-body: 13px;
+  --text-body-strong: 13px;
+  --text-subtitle: 16px;
+  --text-title: 20px;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+
+  --dur-fast: 90ms;
+  --dur-normal: 150ms;
+  --ease-out: cubic-bezier(0, 0, 0, 1);
+
+  --focus-thickness: 2px;
+
+  /* Every button, field and key chip shares this height, so rows line up. */
+  --control-height: 32px;
+}
+
+/* ---------- colours ----------
+   Snippy has a single dark theme; every surface, including the browser-drawn ones (scrollbars,
+   drop-down lists, form controls), is dark. */
+:root { color-scheme: dark; }
+
+:root {
+  --bg-base: #202020;
+  --bg-layer: #2b2b2b;
+  --bg-layer-alt: #272727;
+  --bg-smoke: rgba(0, 0, 0, 0.4);
+  --fill-control: rgba(255, 255, 255, 0.0605);
+  --fill-control-hover: rgba(255, 255, 255, 0.0837);
+  --fill-control-pressed: rgba(255, 255, 255, 0.0326);
+  --fill-subtle-hover: rgba(255, 255, 255, 0.0605);
+  --fill-subtle-pressed: rgba(255, 255, 255, 0.0419);
+  --fill-input: rgba(255, 255, 255, 0.0605);
+  --stroke-control: rgba(255, 255, 255, 0.0698);
+  --stroke-control-strong: rgba(255, 255, 255, 0.1);
+  --stroke-divider: rgba(255, 255, 255, 0.0837);
+  --stroke-card: rgba(255, 255, 255, 0.0578);
+  --stroke-bottom: rgba(255, 255, 255, 0.093);
+  --text-primary: #ffffff;
+  --text-secondary: rgba(255, 255, 255, 0.786);
+  --text-disabled: rgba(255, 255, 255, 0.3628);
+  --text-on-accent: #000000;
+  --text-accent: #99ebff;
+  --accent: #4cc2ff;
+  --accent-hover: #47b1e8;
+  --accent-pressed: #42a1d2;
+  --accent-subtle: rgba(76, 194, 255, 0.12);
+  --danger: #ff99a4;
+  --danger-subtle: rgba(255, 153, 164, 0.1);
+  --success: #6ccb5f;
+  --focus-outer: #ffffff;
+  --focus-inner: #000000;
+  --shadow-strong: rgba(0, 0, 0, 0.26);
+  --shadow-soft: rgba(0, 0, 0, 0.13);
+
+  --shadow-flyout: 0 8px 16px var(--shadow-strong);
+  --shadow-card: 0 2px 4px var(--shadow-soft);
+  --shadow-tooltip: 0 4px 8px var(--shadow-strong);
+}
+
+/* ---------- primitives shared by every window ---------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+/* `hidden` must win over component display rules such as `.btn { display: inline-flex }`. */
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-ui);
+  font-size: var(--text-body);
+  color: var(--text-primary);
+  background: var(--bg-base);
+  -webkit-user-select: none;
+  user-select: none;
+  overflow: hidden;
+}
+
+:focus-visible {
+  outline: var(--focus-thickness) solid var(--focus-outer);
+  outline-offset: 1px;
+  border-radius: var(--radius-sm);
+}
+
+/* Fluent button: subtle by default, accent variant for the primary action. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: var(--control-height);
+  padding: 5px 12px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--fill-control);
+  border: 1px solid var(--stroke-control);
+  border-bottom-color: var(--stroke-bottom);
+  border-radius: var(--radius-sm);
+  cursor: default;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.btn:hover {
+  background: var(--fill-control-hover);
+}
+
+.btn:active {
+  background: var(--fill-control-pressed);
+  color: var(--text-secondary);
+  border-bottom-color: var(--stroke-control);
+}
+
+.btn:disabled {
+  color: var(--text-disabled);
+  background: var(--fill-control-pressed);
+  border-color: var(--stroke-control);
+}
+
+.btn.accent {
+  color: var(--text-on-accent);
+  background: var(--accent);
+  border-color: transparent;
+  border-bottom-color: rgba(0, 0, 0, 0.14);
+}
+
+.btn.accent:hover {
+  background: var(--accent-hover);
+}
+
+.btn.accent:active {
+  background: var(--accent-pressed);
+  color: rgba(0, 0, 0, 0.62);
+}
+
+/* A busy or unavailable primary button stays recognisably blue, just dimmed. */
+.btn.accent:disabled {
+  color: rgba(0, 0, 0, 0.55);
+  background: var(--accent);
+  border-color: transparent;
+  opacity: 0.5;
+}
+
+.btn.subtle {
+  background: transparent;
+  border-color: transparent;
+  font-weight: 400;
+}
+
+.btn.subtle:hover {
+  background: var(--fill-subtle-hover);
+}
+
+.btn.subtle:active {
+  background: var(--fill-subtle-pressed);
+}
+
+.btn.icon {
+  min-width: 32px;
+  padding: 4px;
+}
+
+/* Fluent card / settings group. */
+.card {
+  background: var(--bg-layer);
+  border: 1px solid var(--stroke-card);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+}
+
+/* Fluent toggle switch. */
+.switch {
+  position: relative;
+  flex: none;
+  width: 40px;
+  height: 20px;
+  appearance: none;
+  margin: 0;
+  background: var(--fill-control);
+  border: 1px solid var(--stroke-control-strong);
+  border-radius: 10px;
+  cursor: default;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  transform: translateY(-50%);
+  transition: left var(--dur-normal) var(--ease-out),
+    width var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+
+.switch:hover::after {
+  width: 14px;
+}
+
+.switch:checked {
+  background: var(--accent);
+  border-color: transparent;
+}
+
+.switch:checked::after {
+  left: 22px;
+  background: var(--text-on-accent);
+}
+
+.switch:checked:hover {
+  background: var(--accent-hover);
+}
+
+.switch:checked:hover::after {
+  left: 20px;
+}
+
+/* Fluent text input / combobox. */
+.field {
+  min-height: var(--control-height);
+  padding: 5px 10px;
+  font: inherit;
+  color: var(--text-primary);
+  background: var(--fill-input);
+  border: 1px solid var(--stroke-control-strong);
+  border-bottom-width: 1px;
+  border-bottom-color: var(--stroke-control-strong);
+  border-radius: var(--radius-sm);
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.field:hover {
+  background: var(--fill-control-hover);
+}
+
+/* The drop-down list of a <select> is drawn by the browser: give its options the theme's colours,
+   or a dark theme shows light text on the default white list. */
+select.field option {
+  color: var(--text-primary);
+  background-color: var(--bg-layer);
+}
+
+/* Solid colours: the list is a separate native popup, where translucency would show its default
+   white through. */
+select.field option:checked {
+  color: var(--text-primary);
+  background-color: #1f3a4a;
+}
+
+.field:focus {
+  outline: none;
+  border-bottom: 2px solid var(--accent);
+  padding-bottom: 4px;
+}
+
+.divider {
+  height: 1px;
+  background: var(--stroke-divider);
+  border: 0;
+  margin: 0;
+}
+
+/* Sprite icons from icons.svg; outline glyphs inherit currentColor. */
+.icon {
+  flex: none;
+  display: block;
+  width: 20px;
+  height: 20px;
+  overflow: visible;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.scroll {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--text-disabled) transparent;
+}

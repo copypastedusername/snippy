@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-overlay-pixels"
+description = "Enables the overlay_pixels command without any pre-configured scope."
+commands.allow = ["overlay_pixels"]
+
+[[permission]]
+identifier = "deny-overlay-pixels"
+description = "Denies the overlay_pixels command without any pre-configured scope."
+commands.deny = ["overlay_pixels"]

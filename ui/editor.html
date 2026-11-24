@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Snippy | Editor</title>
+    <link rel="stylesheet" href="styles/theme.css">
+    <link rel="stylesheet" href="styles/editor.css">
+    <script src="scripts/editor.js" defer></script>
+  </head>
+  <body>
+    <header class="editor-toolbar" role="toolbar" aria-label="Tools">
+      <div class="tool-group" role="radiogroup" aria-label="Tool">
+        <button class="tool" type="button" data-tool="select" title="Select and move (V)" aria-label="Select"><svg class="icon"><use href="icons.svg#tool-select"></use></svg></button>
+        <button class="tool" type="button" data-tool="pen" title="Pen (P)" aria-label="Pen"><svg class="icon"><use href="icons.svg#tool-pen"></use></svg></button>
+        <button class="tool" type="button" data-tool="highlighter" title="Highlighter (H)" aria-label="Highlighter"><svg class="icon"><use href="icons.svg#tool-highlighter"></use></svg></button>
+        <button class="tool" type="button" data-tool="arrow" title="Arrow (A)" aria-label="Arrow"><svg class="icon"><use href="icons.svg#tool-arrow"></use></svg></button>
+        <button class="tool" type="button" data-tool="line" title="Line (L)" aria-label="Line"><svg class="icon"><use href="icons.svg#tool-line"></use></svg></button>
+        <button class="tool" type="button" data-tool="rect" title="Rectangle (R)" aria-label="Rectangle"><svg class="icon"><use href="icons.svg#tool-rect"></use></svg></button>
+        <button class="tool" type="button" data-tool="ellipse" title="Ellipse (E)" aria-label="Ellipse"><svg class="icon"><use href="icons.svg#tool-ellipse"></use></svg></button>
+        <button class="tool" type="button" data-tool="text" title="Text (T)" aria-label="Text"><svg class="icon"><use href="icons.svg#tool-text"></use></svg></button>
+        <button class="tool" type="button" data-tool="emoji" title="Emoji (M)" aria-label="Emoji"><svg class="icon"><use href="icons.svg#tool-emoji"></use></svg></button>
+        <button class="tool" type="button" data-tool="blur" title="Hide (pixelate) an area (B)" aria-label="Pixelate"><svg class="icon"><use href="icons.svg#tool-blur"></use></svg></button>
+        <button class="tool" type="button" data-tool="crop" title="Crop (C)" aria-label="Crop"><svg class="icon"><use href="icons.svg#tool-crop"></use></svg></button>
+      </div>
+      <span class="separator" aria-hidden="true"></span>
+      <button id="undoButton" class="tool" type="button" title="Undo (Ctrl+Z)" aria-label="Undo"><svg class="icon"><use href="icons.svg#undo"></use></svg></button>
+      <button id="redoButton" class="tool" type="button" title="Redo (Ctrl+Y)" aria-label="Redo"><svg class="icon"><use href="icons.svg#redo"></use></svg></button>
+      <span class="separator" aria-hidden="true"></span>
+      <button id="textButton" class="tool wide" type="button" title="Find text in the image (O)" aria-pressed="false"><svg class="icon"><use href="icons.svg#text-scan"></use></svg><span>Text</span></button>
+      <span class="spacer"></span>
+      <button id="copyButton" class="btn subtle" type="button" title="Copy image (Ctrl+C)"><svg class="icon" width="16" height="16"><use href="icons.svg#copy"></use></svg><span>Copy</span></button>
+      <button id="saveAsButton" class="btn subtle" type="button" title="Save as… (Ctrl+Shift+S)"><span>Save as…</span></button>
+      <button id="saveButton" class="btn accent" type="button" title="Save a copy next to the original (Ctrl+S)"><svg class="icon" width="16" height="16"><use href="icons.svg#save"></use></svg><span>Save</span></button>
+    </header>
+
+    <div id="optionsBar" class="options-bar">
+      <div id="colorOptions" class="option" role="radiogroup" aria-label="Colour"></div>
+      <label id="widthOption" class="option"><span id="widthLabel">Width</span><input id="widthRange" type="range" min="1" max="24" step="1"><output id="widthValue"></output></label>
+      <label id="outlineOption" class="option toggle"><input id="outlineSwitch" class="switch" type="checkbox"><span>Outline</span></label>
+      <label id="fillOption" class="option toggle"><input id="fillSwitch" class="switch" type="checkbox"><span>Fill</span></label>
+      <div id="emojiOption" class="option">
+        <button id="emojiButton" class="btn" type="button" aria-haspopup="dialog"><span id="emojiCurrent" class="emoji-glyph">👍</span><span>Choose</span></button>
+      </div>
+      <div id="cropOption" class="option" hidden>
+        <span class="hint">Drag to choose the area to keep.</span>
+        <button id="applyCropButton" class="btn accent" type="button">Apply</button>
+        <button id="resetCropButton" class="btn" type="button">Reset</button>
+      </div>
+      <div id="ocrOption" class="option" hidden>
+        <label class="ocr-language"><span>Language</span><select id="ocrLanguage" class="field"></select></label>
+        <button id="copyTextButton" class="btn" type="button">Copy all text</button>
+        <span id="ocrStatus" class="hint"></span>
+      </div>
+      <span class="spacer"></span>
+      <span id="zoomLabel" class="hint" title="Ctrl + mouse wheel to zoom, 0 to fit"></span>
+    </div>
+
+    <main id="stage" class="stage">
+      <div id="sheet" class="sheet">
+        <canvas id="canvas"></canvas>
+        <div id="textLayer" class="text-layer" hidden></div>
+        <textarea id="textEditor" class="text-editor" spellcheck="false" hidden></textarea>
+      </div>
+    </main>
+
+    <div id="emojiPicker" class="emoji-picker" role="dialog" aria-label="Emoji" hidden>
+      <div id="emojiGrid" class="emoji-grid"></div>
+      <label class="emoji-any"><span>Any emoji</span><input id="emojiInput" class="field" type="text" placeholder="Press Win + . here" maxlength="16"></label>
+    </div>
+
+    <footer id="status" class="editor-status" role="status" aria-live="polite"></footer>
+  </body>
+</html>

@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Snippy Overlay</title>
+  <link rel="stylesheet" href="styles/theme.css">
+  <link rel="stylesheet" href="styles/overlay.css">
+</head>
+<body data-mode="rectangle">
+  <canvas id="overlayCanvas" aria-label="Screenshot selection surface"></canvas>
+
+  <div id="toolbar" class="toolbar" role="toolbar" aria-label="Snipping mode">
+    <div class="mode-group" role="group" aria-label="Capture mode">
+      <button class="tool-button" type="button" data-mode="rectangle" title="Rectangle (1)" aria-label="Rectangle" aria-pressed="true">
+        <svg class="icon" width="20" height="20" aria-hidden="true"><use href="icons.svg#mode-rectangle"></use></svg>
+      </button>
+      <button class="tool-button" type="button" data-mode="freeform" title="Free-form (2)" aria-label="Free-form" aria-pressed="false">
+        <svg class="icon" width="20" height="20" aria-hidden="true"><use href="icons.svg#mode-freeform"></use></svg>
+      </button>
+      <button class="tool-button" type="button" data-mode="window" title="Window (3)" aria-label="Window" aria-pressed="false">
+        <svg class="icon" width="20" height="20" aria-hidden="true"><use href="icons.svg#mode-window"></use></svg>
+      </button>
+      <button class="tool-button" type="button" data-mode="fullscreen" title="Full screen (4)" aria-label="Full screen" aria-pressed="false">
+        <svg class="icon" width="20" height="20" aria-hidden="true"><use href="icons.svg#mode-fullscreen"></use></svg>
+      </button>
+    </div>
+
+    <span class="toolbar-divider" aria-hidden="true"></span>
+
+    <button id="closeButton" class="tool-button close-button" type="button" title="Close (Esc)" aria-label="Close">
+      <svg class="icon" width="20" height="20" aria-hidden="true"><use href="icons.svg#close"></use></svg>
+    </button>
+  </div>
+
+  <script src="scripts/snap.js"></script>
+  <script src="scripts/overlay.js"></script>
+</body>
+</html>

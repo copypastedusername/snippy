@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-overlay-metadata"
+description = "Enables the overlay_metadata command without any pre-configured scope."
+commands.allow = ["overlay_metadata"]
+
+[[permission]]
+identifier = "deny-overlay-metadata"
+description = "Denies the overlay_metadata command without any pre-configured scope."
+commands.deny = ["overlay_metadata"]

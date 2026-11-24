@@ -1,0 +1,19 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "overlay-window",
+  "description": "The selection overlay: reading the frozen frame and finishing or cancelling the snip.",
+  "windows": [
+    "overlay"
+  ],
+  "permissions": [
+    "allow-get-config",
+    "allow-cancel-snip",
+    "allow-overlay-metadata",
+    "allow-overlay-pixels",
+    "allow-overlay-ready",
+    "allow-finish-rect",
+    "allow-finish-freeform",
+    "allow-finish-window",
+    "allow-finish-monitor"
+  ]
+}

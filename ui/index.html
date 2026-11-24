@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Snippy</title>
+    <link rel="stylesheet" href="styles/theme.css">
+    <link rel="stylesheet" href="styles/main.css">
+    <script src="scripts/ui-kit.js" defer></script>
+    <script src="scripts/main.js" defer></script>
+  </head>
+  <body>
+    <main class="app">
+      <div class="window-controls" role="group" aria-label="Window">
+        <button id="minimizeButton" class="caption-button" type="button" title="Minimize" aria-label="Minimize">
+          <svg class="icon" width="16" height="16" aria-hidden="true"><use href="icons.svg#minimize"></use></svg>
+        </button>
+        <button id="closeWindowButton" class="caption-button close" type="button" title="Close" aria-label="Close">
+          <svg class="icon" width="16" height="16" aria-hidden="true"><use href="icons.svg#close"></use></svg>
+        </button>
+      </div>
+      <section id="captureView" class="view capture-view" aria-labelledby="captureTitle">
+        <header class="header title-bar" data-tauri-drag-region>
+          <svg class="icon brand-icon" width="24" height="24" aria-hidden="true"><use href="icons.svg#logo"></use></svg>
+          <h1 id="captureTitle" class="wordmark" data-tauri-drag-region>Snippy</h1>
+          <span class="spacer" data-tauri-drag-region></span>
+          <button id="openFolderButton" class="btn subtle icon" type="button" title="Open captures folder" aria-label="Open captures folder">
+            <svg class="icon" width="20" height="20" aria-hidden="true"><use href="icons.svg#folder"></use></svg>
+          </button>
+          <button id="settingsButton" class="btn subtle icon" type="button" title="Settings" aria-label="Settings">
+            <svg class="icon" width="20" height="20" aria-hidden="true"><use href="icons.svg#settings"></use></svg>
+          </button>
+        </header>
+
+        <div class="capture-content">
+          <div id="modeSelector" class="mode-selector" role="radiogroup" aria-label="Capture mode">
+            <button class="mode-tile" type="button" role="radio" aria-checked="true" tabindex="0" data-mode="rectangle">
+              <svg class="icon" width="20" height="20" aria-hidden="true"><use href="icons.svg#mode-rectangle"></use></svg>
+              <span>Rectangle</span>
+            </button>
+            <button class="mode-tile" type="button" role="radio" aria-checked="false" tabindex="-1" data-mode="freeform">
+              <svg class="icon" width="20" height="20" aria-hidden="true"><use href="icons.svg#mode-freeform"></use></svg>
+              <span>Free-form</span>
+            </button>
+            <button class="mode-tile" type="button" role="radio" aria-checked="false" tabindex="-1" data-mode="window">
+              <svg class="icon" width="20" height="20" aria-hidden="true"><use href="icons.svg#mode-window"></use></svg>
+              <span>Window</span>
+            </button>
+            <button class="mode-tile" type="button" role="radio" aria-checked="false" tabindex="-1" data-mode="fullscreen">
+              <svg class="icon" width="20" height="20" aria-hidden="true"><use href="icons.svg#mode-fullscreen"></use></svg>
+              <span>Full screen</span>
+            </button>
+          </div>
+
+          <div class="action-row">
+            <label class="inline-field" for="captureDelay" title="Delay before capture">
+              <svg class="icon" width="16" height="16" aria-hidden="true"><use href="icons.svg#timer"></use></svg>
+              <span class="visually-hidden">Delay</span>
+              <select id="captureDelay" class="field delay-field">
+                <option value="0">No delay</option>
+                <option value="1">1 s</option>
+                <option value="2">2 s</option>
+                <option value="3">3 s</option>
+                <option value="5">5 s</option>
+                <option value="10">10 s</option>
+              </select>
+            </label>
+            <kbd id="selectedHotkey" class="kbd"></kbd>
+            <span class="spacer"></span>
+            <button id="newSnipButton" class="btn accent new-snip" type="button">
+              <svg class="icon" width="16" height="16" aria-hidden="true"><use href="icons.svg#snip"></use></svg>
+              <span>New snip</span>
+            </button>
+          </div>
+
+          <section class="recent-section" aria-labelledby="recentTitle">
+            <div class="section-heading">
+              <h2 id="recentTitle" class="section-title">Recent</h2>
+              <button id="recentFolderButton" class="btn subtle link-button" type="button">Show all</button>
+            </div>
+            <div id="recentCaptures" class="recent-list scroll"></div>
+            <p id="recentEmpty" class="muted empty-state">No captures yet</p>
+          </section>
+        </div>
+      </section>
+
+      <section id="settingsView" class="view settings-view" aria-labelledby="settingsTitle" hidden>
+        <header class="header title-bar settings-header" data-tauri-drag-region>
+          <button id="backButton" class="btn subtle icon" type="button" title="Back to capture" aria-label="Back to capture">
+            <svg class="icon" width="20" height="20" aria-hidden="true"><use href="icons.svg#back"></use></svg>
+          </button>
+          <h1 id="settingsTitle" class="view-title" data-tauri-drag-region>Settings</h1>
+        </header>
+        <div class="scroll settings-scroll">
+          <section class="settings-group" aria-labelledby="generalTitle">
+            <h2 id="generalTitle" class="group-title">General</h2>
+            <div class="card">
+              <div class="setting-row">
+                <label for="autostartSwitch">Start with Windows</label>
+                <input id="autostartSwitch" class="switch" type="checkbox">
+              </div>
+              <div class="divider"></div>
+              <div class="setting-row">
+                <div class="setting-copy">
+                  <label for="adminSwitch">Run as administrator</label>
+                  <span id="adminNote" class="description">Needed for hotkeys inside full-screen games.</span>
+                  <span id="elevatedNote" class="description"></span>
+                </div>
+                <input id="adminSwitch" class="switch" type="checkbox">
+              </div>
+              <div class="divider"></div>
+              <div class="setting-row">
+                <label for="closeTraySwitch">Close button minimizes to tray</label>
+                <input id="closeTraySwitch" class="switch" type="checkbox">
+              </div>
+              <div class="divider"></div>
+              <div class="setting-row">
+                <label for="startMinimizedSwitch">Start minimized</label>
+                <input id="startMinimizedSwitch" class="switch" type="checkbox">
+              </div>
+              <div class="divider"></div>
+              <div class="setting-row">
+                <label for="previewSelect">Show preview after capture</label>
+                <select id="previewSelect" class="field compact-field">
+                  <option value="off">Off</option>
+                  <option value="3">For 3 s</option>
+                  <option value="5">For 5 s</option>
+                  <option value="10">For 10 s</option>
+                </select>
+              </div>
+              <div class="divider"></div>
+              <div class="setting-row">
+                <div class="setting-copy">
+                  <label for="windowsNotificationsSwitch">Use Windows notifications</label>
+                  <span class="description">Shows the preview in the notification area, with an Edit button. Windows decides how long it stays on screen.</span>
+                </div>
+                <input id="windowsNotificationsSwitch" class="switch" type="checkbox">
+              </div>
+            </div>
+          </section>
+
+          <section class="settings-group" aria-labelledby="updatesTitle">
+            <h2 id="updatesTitle" class="group-title">Updates</h2>
+            <div class="card">
+              <div class="setting-row">
+                <div class="setting-copy">
+                  <span id="versionLabel">Snippy</span>
+                  <span id="updateNote" class="description">Snippy checks for a new version when it starts.</span>
+                </div>
+                <div class="row-controls">
+                  <button id="installUpdateButton" class="btn accent" type="button" hidden>Update now</button>
+                  <button id="checkUpdatesButton" class="btn" type="button">Check now</button>
+                </div>
+              </div>
+              <div class="divider"></div>
+              <div class="setting-row">
+                <label for="updatesSwitch">Check for updates automatically</label>
+                <input id="updatesSwitch" class="switch" type="checkbox">
+              </div>
+            </div>
+          </section>
+
+          <section class="settings-group" aria-labelledby="captureSettingsTitle">
+            <h2 id="captureSettingsTitle" class="group-title">Capture</h2>
+            <div class="card">
+              <div class="setting-row">
+                <label for="defaultModeSelect">Default mode</label>
+                <select id="defaultModeSelect" class="field compact-field">
+                  <option value="rectangle">Rectangle</option>
+                  <option value="freeform">Free-form</option>
+                  <option value="window">Window</option>
+                  <option value="fullscreen">Full screen</option>
+                </select>
+              </div>
+              <div class="divider"></div>
+              <div class="setting-row">
+                <label for="settingsDelay">Delay</label>
+                <select id="settingsDelay" class="field compact-field">
+                  <option value="0">No delay</option>
+                  <option value="1">1 s</option>
+                  <option value="2">2 s</option>
+                  <option value="3">3 s</option>
+                  <option value="5">5 s</option>
+                  <option value="10">10 s</option>
+                </select>
+              </div>
+              <div class="divider"></div>
+              <div class="setting-row">
+                <label for="cursorSwitch">Include mouse cursor</label>
+                <input id="cursorSwitch" class="switch" type="checkbox">
+              </div>
+              <div class="divider"></div>
+              <div class="setting-row">
+                <label for="soundSelect">Sound when snipping</label>
+                <div class="row-controls">
+                  <button id="soundPreviewButton" class="btn icon" type="button" title="Play this sound" aria-label="Play this sound"><svg class="icon" width="16" height="16"><use href="icons.svg#sound"></use></svg></button>
+                  <select id="soundSelect" class="field compact-field">
+                    <option value="off">Off</option>
+                    <option value="shutter">Camera shutter</option>
+                    <option value="click">Click</option>
+                    <option value="click-high">High click</option>
+                    <option value="tick">Tick</option>
+                    <option value="ding">Ding</option>
+                  </select>
+                </div>
+              </div>
+              <div class="divider"></div>
+              <div class="setting-row">
+                <label for="magnifierSwitch">Magnifier in overlay</label>
+                <input id="magnifierSwitch" class="switch" type="checkbox">
+              </div>
+            </div>
+          </section>
+
+          <section class="settings-group" aria-labelledby="outputTitle">
+            <h2 id="outputTitle" class="group-title">Output</h2>
+            <div class="card">
+              <div class="setting-row folder-row">
+                <label for="outputFolder">Save to</label>
+                <div class="folder-controls">
+                  <input id="outputFolder" class="field path-field" type="text" readonly>
+                  <button id="browseFolderButton" class="btn" type="button">Browse…</button>
+                  <button id="openSettingsFolderButton" class="btn icon" type="button" title="Open folder" aria-label="Open folder">
+                    <svg class="icon" width="20" height="20" aria-hidden="true"><use href="icons.svg#folder"></use></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="divider"></div>
+              <div class="setting-row">
+                <label for="formatSelect">Format</label>
+                <select id="formatSelect" class="field compact-field">
+                  <option value="png">PNG</option>
+                  <option value="jpeg">JPEG</option>
+                </select>
+              </div>
+              <div class="divider quality-divider"></div>
+              <div id="qualityRow" class="setting-row">
+                <label for="qualityRange">JPEG quality</label>
+                <div class="range-control">
+                  <input id="qualityRange" type="range" min="1" max="100" step="1">
+                  <output id="qualityValue" for="qualityRange">90</output>
+                </div>
+              </div>
+              <div class="divider"></div>
+              <div class="setting-row pattern-row">
+                <div class="setting-copy">
+                  <label for="filenamePattern">File name pattern</label>
+                  <span class="description">Tokens: %Y %m %d %H %M %S</span>
+                  <span id="filenamePreview" class="description preview-text"></span>
+                </div>
+                <input id="filenamePattern" class="field pattern-field" type="text" spellcheck="false">
+              </div>
+              <div class="divider"></div>
+              <div class="setting-row">
+                <label for="autoSaveSwitch">Save to disk automatically</label>
+                <input id="autoSaveSwitch" class="switch" type="checkbox">
+              </div>
+              <div class="divider"></div>
+              <div class="setting-row">
+                <label for="clipboardSwitch">Copy to clipboard</label>
+                <input id="clipboardSwitch" class="switch" type="checkbox">
+              </div>
+            </div>
+          </section>
+
+          <section class="settings-group" aria-labelledby="windowsShortcutsTitle">
+            <h2 id="windowsShortcutsTitle" class="group-title">Windows shortcuts</h2>
+            <div class="card">
+              <div class="setting-row">
+                <div class="setting-copy">
+                  <label for="screenclipSwitch"><kbd class="kbd inline">Win+Shift+S</kbd></label>
+                  <span id="screenclipNote" class="description">Snip with the Windows screenshot shortcut.</span>
+                </div>
+                <input id="screenclipSwitch" class="switch" type="checkbox">
+              </div>
+              <div class="divider"></div>
+              <div class="setting-row">
+                <div class="setting-copy">
+                  <label for="printScreenSwitch"><kbd class="kbd inline">Print Screen</kbd></label>
+                  <span id="printScreenNote" class="description">Snip with the Print Screen key.</span>
+                </div>
+                <button id="keyboardSettingsButton" class="btn" type="button" hidden>Keyboard settings</button>
+                <input id="printScreenSwitch" class="switch" type="checkbox">
+              </div>
+              <div class="divider"></div>
+              <div class="setting-row">
+                <div class="setting-copy">
+                  <label for="windowsOnlySwitch">Use only these keys</label>
+                  <span class="description">Turns off the Snippy hotkeys below.</span>
+                </div>
+                <input id="windowsOnlySwitch" class="switch" type="checkbox">
+              </div>
+              <div id="defaultAppsRow" class="setting-row callout" hidden>
+                <div class="setting-copy">
+                  <span id="defaultAppsNote" class="description"></span>
+                  <ol id="defaultAppsSteps" class="steps">
+                    <li>Click <b>Open Default apps</b> — Windows opens Snippy's page.</li>
+                    <li>Find <b>MS-SCREENCLIP</b> in the list and click the app shown next to it.</li>
+                    <li>Choose <b>Snippy</b>. Windows 10: scroll to <i>Choose default apps by protocol</i>, then MS-SCREENCLIP.</li>
+                  </ol>
+                </div>
+                <button id="defaultAppsButton" class="btn accent" type="button">Open Default apps</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="settings-group" aria-labelledby="hotkeysTitle">
+            <div class="group-heading">
+              <h2 id="hotkeysTitle" class="group-title">Hotkeys</h2>
+              <button id="restoreDefaultsButton" class="btn" type="button">Restore defaults</button>
+            </div>
+            <div id="hotkeysCard" class="card">
+              <div class="setting-row hotkey-row">
+                <label for="hotkeyRectangle">Rectangle</label>
+                <div class="hotkey-control">
+                  <input id="hotkeyRectangle" class="field hotkey-input" type="text" readonly data-hotkey="rectangle" placeholder="Not bound">
+                  <span class="hotkey-error" aria-live="polite"></span>
+                </div>
+              </div>
+              <div class="divider"></div>
+              <div class="setting-row hotkey-row">
+                <label for="hotkeyFreeform">Free-form</label>
+                <div class="hotkey-control">
+                  <input id="hotkeyFreeform" class="field hotkey-input" type="text" readonly data-hotkey="freeform" placeholder="Not bound">
+                  <span class="hotkey-error" aria-live="polite"></span>
+                </div>
+              </div>
+              <div class="divider"></div>
+              <div class="setting-row hotkey-row">
+                <label for="hotkeyWindow">Window</label>
+                <div class="hotkey-control">
+                  <input id="hotkeyWindow" class="field hotkey-input" type="text" readonly data-hotkey="window" placeholder="Not bound">
+                  <span class="hotkey-error" aria-live="polite"></span>
+                </div>
+              </div>
+              <div class="divider"></div>
+              <div class="setting-row hotkey-row">
+                <label for="hotkeyFullscreen">Full screen</label>
+                <div class="hotkey-control">
+                  <input id="hotkeyFullscreen" class="field hotkey-input" type="text" readonly data-hotkey="fullscreen" placeholder="Not bound">
+                  <span class="hotkey-error" aria-live="polite"></span>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <footer id="statusLine" class="status-line" role="status" aria-live="polite">Loading settings…</footer>
+    </main>
+    <div id="contextMenu" class="context-menu" role="menu" aria-hidden="true" hidden></div>
+  </body>
+</html>

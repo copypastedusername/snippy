@@ -1,0 +1,176 @@
+/* Annotation editor. Layout: tool bar, options bar, scrollable stage, status line. */
+
+body {
+  display: flex;
+  height: 100vh;
+  flex-direction: column;
+}
+
+.editor-toolbar,
+.options-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  background: var(--bg-layer-alt);
+  border-bottom: 1px solid var(--stroke-divider);
+}
+
+.options-bar {
+  min-height: 46px;
+  gap: 14px;
+  background: var(--bg-base);
+}
+
+.tool-group { display: flex; gap: 2px; }
+.separator { width: 1px; height: 24px; margin: 0 6px; background: var(--stroke-divider); }
+.spacer { flex: 1; }
+
+.tool {
+  display: inline-flex;
+  height: var(--control-height);
+  min-width: 34px;
+  padding: 0 7px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--text-primary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font: inherit;
+}
+.tool:hover { background: var(--fill-subtle-hover); }
+.tool:active { background: var(--fill-subtle-pressed); }
+.tool:disabled { color: var(--text-disabled); background: transparent; }
+.tool[aria-checked="true"],
+.tool[aria-pressed="true"] { color: var(--accent); background: var(--accent-subtle); border-color: var(--accent); }
+
+.option { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); }
+.option[hidden] { display: none; }
+.option input[type="range"] { width: 120px; accent-color: var(--accent); }
+.option output { min-width: 22px; color: var(--text-primary); text-align: right; }
+.toggle { cursor: default; }
+.hint { color: var(--text-secondary); font-size: var(--text-caption); }
+
+.swatch {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 2px solid var(--bg-base);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--stroke-control-strong);
+}
+.swatch[aria-checked="true"] { box-shadow: 0 0 0 2px var(--accent); }
+.swatch-custom {
+  position: relative;
+  overflow: hidden;
+  background: conic-gradient(red, yellow, lime, cyan, blue, magenta, red);
+}
+.swatch-custom input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+
+.stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background:
+    repeating-conic-gradient(var(--fill-subtle-hover) 0% 25%, transparent 0% 50%) 0 0 / 16px 16px,
+    var(--bg-base);
+}
+
+.sheet {
+  position: relative;
+  margin: 24px auto;
+  box-shadow: var(--shadow-flyout);
+}
+
+#canvas { display: block; touch-action: none; }
+.stage[data-tool="select"] #canvas { cursor: default; }
+.stage[data-tool="text"] #canvas { cursor: text; }
+.stage:not([data-tool="select"]):not([data-tool="text"]) #canvas { cursor: crosshair; }
+
+/* Recognised words sit over the image as real, transparent text: the native selection and
+   Ctrl+C then work exactly like in any document. */
+.text-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.35);
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+.text-layer[hidden] { display: none; }
+.ocr-word {
+  position: absolute;
+  color: transparent;
+  white-space: pre;
+  line-height: 1;
+  background: rgba(255, 255, 255, 0.12);
+  outline: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 2px;
+  transform-origin: left top;
+}
+.ocr-word::selection { color: transparent; background: rgba(76, 194, 255, 0.55); }
+
+.text-editor {
+  position: absolute;
+  z-index: 2;
+  min-width: 40px;
+  padding: 0;
+  overflow: hidden;
+  resize: none;
+  background: transparent;
+  border: 1px dashed var(--accent);
+  outline: none;
+  font-family: "Segoe UI", sans-serif;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: pre;
+}
+.text-editor[hidden] { display: none; }
+
+.emoji-glyph { font-family: "Segoe UI Emoji", sans-serif; font-size: 18px; line-height: 1; }
+
+.emoji-picker {
+  position: fixed;
+  z-index: 20;
+  width: 312px;
+  padding: 8px;
+  background: var(--bg-layer);
+  border: 1px solid var(--stroke-card);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-flyout);
+}
+.emoji-picker[hidden] { display: none; }
+.emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; }
+.emoji-grid button {
+  height: 34px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  font: 22px/1 "Segoe UI Emoji", sans-serif;
+}
+.emoji-grid button:hover { background: var(--fill-subtle-hover); }
+.emoji-any { display: flex; align-items: center; gap: 8px; margin-top: 8px; color: var(--text-secondary); font-size: var(--text-caption); }
+.emoji-any .field { flex: 1; min-width: 0; font-family: "Segoe UI Emoji", "Segoe UI", sans-serif; }
+
+.ocr-language { display: flex; align-items: center; gap: 8px; }
+.ocr-language .field { min-width: 140px; }
+
+.editor-status {
+  flex: none;
+  min-height: 28px;
+  padding: 5px 12px;
+  overflow: hidden;
+  color: var(--text-secondary);
+  background: var(--bg-layer-alt);
+  border-top: 1px solid var(--stroke-divider);
+  font-size: var(--text-caption);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.editor-status.error { color: var(--danger); }

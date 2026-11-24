@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-finish-monitor"
+description = "Enables the finish_monitor command without any pre-configured scope."
+commands.allow = ["finish_monitor"]
+
+[[permission]]
+identifier = "deny-finish-monitor"
+description = "Denies the finish_monitor command without any pre-configured scope."
+commands.deny = ["finish_monitor"]

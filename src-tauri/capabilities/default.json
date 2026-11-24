@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Every Snippy page may listen for the backend's events; none may emit them.",
+  "windows": [
+    "main",
+    "overlay",
+    "flyout",
+    "editor"
+  ],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
+  ]
+}

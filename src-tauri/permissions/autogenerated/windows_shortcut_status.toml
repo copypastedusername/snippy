@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-windows-shortcut-status"
+description = "Enables the windows_shortcut_status command without any pre-configured scope."
+commands.allow = ["windows_shortcut_status"]
+
+[[permission]]
+identifier = "deny-windows-shortcut-status"
+description = "Denies the windows_shortcut_status command without any pre-configured scope."
+commands.deny = ["windows_shortcut_status"]
