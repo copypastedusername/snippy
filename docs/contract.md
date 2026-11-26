@@ -124,8 +124,10 @@ is_elevated()                                 -> boolean
 hide_flyout()                                 -> void
 show_main_window()                            -> void
 open_default_apps()                           -> void            // Settings > Default apps, Snippy page
-windows_shortcut_status()                     -> { win_shift_s_taken, print_screen_taken, print_screen_by_windows: boolean, closed_handler: string | null, closed_handler_is_snippy: boolean }
+windows_shortcut_status()                     -> { win_shift_s_taken, win_shift_s_hooked, windows_hotkey_off, print_screen_taken, print_screen_by_windows: boolean, closed_handler: string | null, closed_handler_is_snippy: boolean }
 open_keyboard_settings()                      -> void            // Windows keyboard settings (Print Screen option)
+set_windows_hotkey_off(off)                   -> void            // Windows 10: Explorer's own Win+S hotkeys off/on
+set_windows_overlay_disabled(disabled)        -> status          // Windows 10: Windows' own clipping overlay off/on
 main_ready()                                  -> void            // main page rendered; show the window
 
 open_editor(path: string | null)              -> void            // capture in the output folder, or the latest snip
@@ -206,16 +208,50 @@ highlights is exactly what gets saved.
 
 ## Windows keys (Win+Shift+S, Print Screen)
 
-Snippy uses only supported mechanisms here: no keyboard hooks (they look like keyloggers to
-anti-cheat and antivirus software) and no writes to Windows' protected default-app choice.
+Snippy writes nothing to Windows' protected default-app choice. It uses a keyboard hook only where
+nothing else works: for Win+Shift+S on Windows 10, with the option on.
 
-- **Win+Shift+S.** Explorer holds it and opens an `ms-screenclip:` link with the default app,
-  normally the Snipping Tool. With the option on, Snippy registers itself per user (HKCU) as an app
-  for that link; the user makes it the default once in Settings > Default apps (Windows requires the
-  user's choice; it cannot be set silently). The settings page names the current app
-  (`closed_handler`), opens Snippy's Default apps page and lists the steps. Windows then starts
+- **Win+Shift+S on Windows 11.** Explorer holds it and opens an `ms-screenclip:` link with the
+  default app (normally the Snipping Tool). With the option on, Snippy registers itself per user
+  (HKCU) as an app for `ms-screenclip:` and `ms-screensketch:`; the user makes it the default once
+  in Settings > Default apps (Windows requires the user's choice; it cannot be set silently). The
+  settings page names the current app (`closed_handler`) and the links still to switch
+  (`links_to_set`), opens Snippy's Default apps page and lists the steps. Windows then starts
   `snippy.exe --screenclip "<link>"`, which snips in `capture.default_mode`. Where Explorer leaves
   the chord free (trimmed builds), Snippy registers it as an ordinary hotkey instead.
+- **Win+Shift+S on Windows 10** (builds before 22000). Explorer starts its own screen clipping for
+  the chord and opens no link, whatever the defaults are (only Print Screen goes through
+  `ms-screenclip:` there). Snippy installs a `WH_KEYBOARD_LL` hook on its own thread
+  (`keyhook.rs`): on S down with Win and Shift held and no Ctrl or Alt it swallows the S, its repeats
+  and its release, presses the unassigned key 0xFF so that releasing Win does not open Start (as
+  PowerToys does), and starts a snip. Every other key passes on, and a press of S that passed keeps
+  passing until it is released. The thread first tries to register the chord as an ordinary hotkey;
+  that succeeds whenever Explorer does not hold it, and then no hook runs. Windows removes a
+  low-level hook without notice when it once answers too late, so the thread (high priority, doing
+  nothing but pumping messages; the snip and the log run on a separate thread) installs a fresh hook
+  every 2 s before removing the old one, and tries the hotkey again. Windows also stops calling the
+  hook while one of Snippy's own windows has the keyboard if the app is registered for Raw Input,
+  which Tao does by default; Snippy turns that off (`DeviceEventFilter::Always`, see wry issue 1761)
+  and reads no device events. The capture flyout is shown without activation, like a notification.
+  The hook is removed while a hotkey is being recorded and when the option is off;
+  `win_shift_s_hooked` reports the worker. Without elevation, Windows does not pass keys meant for
+  elevated windows to the hook.
+- **Turning off Explorer's Win+Shift+S (Windows 10, opt-in).** `set_windows_hotkey_off(off)` adds or
+  removes `S` in `HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced\DisabledHotkeys`
+  (other letters are kept; an empty value is deleted). Explorer reads it at sign-in and then
+  registers none of its Win+S hotkeys, so Win+Shift+S reaches Snippy as an ordinary hotkey and
+  Win+S Search is off too. `windows_hotkey_off` reports the setting.
+- **Windows 10's own overlay (opt-in, `windows_overlay.rs`).** `set_windows_overlay_disabled(disabled)`
+  runs `snippy.exe --windows-overlay disable|restore` elevated (a separate process even when Snippy
+  is elevated) and returns the new `windows_overlay` status (`present`, `disabled`,
+  `restored_by_windows`, `unsupported`). The helper requires elevation and Windows 10, holds a
+  machine-wide mutex, and only touches `%WINDIR%\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\ScreenClippingHost.exe`
+  and its `.snippy-off` backup. It renames with SeBackup/SeRestore and backup semantics, never over
+  an existing file, without changing the owner or access list; only if Windows denies that, it
+  keeps the owner and access list in `HKLM\Software\Snippy\WindowsOverlay`, takes the file for
+  the rename and writes them back. A file in use is a conflict to retry, never a reason to change
+  its security. Exit codes: 0 done, 10 unsupported, 11 not elevated, 12 access, 13 conflict, 14
+  failed.
 - **Print Screen.** Registered as an ordinary hotkey. When Windows' "Use the Print Screen key to open
   screen capture" is on (`HKCU\Control Panel\Keyboard\PrintScreenKeyForSnippingEnabled`; when unset,
   on from Windows 11 build 22621, off on Windows 10), Windows wins the key; the settings page says so

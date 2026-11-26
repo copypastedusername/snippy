@@ -23,7 +23,7 @@ const IMAGE_EXTENSIONS: [&str; 3] = ["png", "jpg", "jpeg"];
 /// Characters Windows rejects in file names, besides the path separators checked separately.
 const INVALID_FILENAME_CHARS: [char; 7] = ['<', '>', ':', '"', '|', '?', '*'];
 /// Leaves room for a `_NNN` collision suffix and the extension within the 255-character limit.
-const MAX_STEM_CHARS: usize = 200;
+pub(crate) const MAX_STEM_CHARS: usize = 200;
 /// Device names Windows reserves regardless of extension (`NUL.png` is `NUL`), per
 /// "Naming Files, Paths, and Namespaces". Superscript digits count as digits for COM/LPT.
 const RESERVED_DEVICE_NAMES: [&str; 4] = ["CON", "PRN", "AUX", "NUL"];

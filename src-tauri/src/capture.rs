@@ -4,11 +4,13 @@
 use crate::config::{CaptureMode, Config};
 use crate::screen::MonitorInfo;
 use crate::storage::{self, CaptureItem};
-use crate::{clipboard, imageops, overlay, screen, winlist, AppState, CaptureSession};
+use crate::{
+    clipboard, display_watch, imageops, overlay, screen, winlist, AppState, CaptureSession,
+};
 use image::RgbaImage;
 use serde::Serialize;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
 
 /// Pause after hiding Snippy's own windows so the compositor drops them before the grab.
@@ -17,6 +19,12 @@ const HIDE_SETTLE: Duration = Duration::from_millis(80);
 /// window without the frame would expose a blank or previous screen). Generous for slow PCs with
 /// large desktops.
 const OVERLAY_READY_TIMEOUT: Duration = Duration::from_secs(6);
+/// Grabs tried while the monitor layout keeps changing under them.
+const GRAB_ATTEMPTS: u32 = 3;
+/// How long a snip waits, over all its grabs, for the desktop to be unlocked and settled; and how
+/// often it looks. A desktop still settling by then is grabbed anyway; a locked one is not.
+const SCREEN_WAIT: Duration = Duration::from_secs(10);
+const WAIT_STEP: Duration = Duration::from_millis(100);
 pub const MAX_DELAY_SECONDS: u64 = 10;
 
 static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
@@ -115,11 +123,9 @@ fn run_capture(
         return Ok(()); // Cancelled during the delay.
     }
 
-    let frame = screen::capture_virtual_screen(include_cursor)?;
-    let monitors = screen::monitors(frame.origin);
-    if monitors.is_empty() {
-        return Err("No display monitors were found".to_owned());
-    }
+    let Some((frame, monitors)) = grab(generation, include_cursor)? else {
+        return Ok(()); // Cancelled while the screen settled.
+    };
 
     if mode == CaptureMode::Fullscreen {
         let monitor = monitor_under_cursor(&monitors, frame.origin)
@@ -163,6 +169,58 @@ fn run_capture(
         return Err("The selection overlay did not draw the screen in time".to_owned());
     }
     Ok(())
+}
+
+/// The desktop's pixels and the monitors they show, once the screen has settled; `None` when the
+/// snip was cancelled meanwhile. A layout that changes during a grab (monitors waking up and
+/// being re-arranged) would pair the pixels with the wrong monitors, so that grab is repeated.
+fn grab(
+    generation: u64,
+    include_cursor: bool,
+) -> Result<Option<(screen::Frame, Vec<MonitorInfo>)>, String> {
+    let deadline = Instant::now() + SCREEN_WAIT;
+    for _ in 0..GRAB_ATTEMPTS {
+        let Some(events) = wait_for_screen(generation, deadline)? else {
+            return Ok(None);
+        };
+        let before = screen::Layout::current();
+        let frame = screen::capture_virtual_screen(include_cursor);
+        let after = screen::Layout::current();
+        // A lock, wake or layout change during the grab may have left the pixels stale or
+        // misplaced even when the monitors end up where they were.
+        if !before.same_as(&after) || display_watch::readiness().1 != events {
+            log::info!("The display changed during the grab; grabbing again");
+            continue;
+        }
+        // The layout held still, so a failed grab is a real failure.
+        let frame = frame?;
+        if after.covers(&frame) {
+            let monitors = after.relative_to(frame.origin);
+            return Ok(Some((frame, monitors)));
+        }
+        log::info!("The grab does not span the monitors; grabbing again");
+    }
+    Err("The display layout kept changing. Try the snip again.".to_owned())
+}
+
+/// Waits until the desktop is unlocked and settled, or `deadline` passes. Returns the display
+/// event count at that moment, or `None` when the snip was cancelled.
+fn wait_for_screen(generation: u64, deadline: Instant) -> Result<Option<u64>, String> {
+    use display_watch::Readiness;
+    loop {
+        if !is_current(generation) {
+            return Ok(None);
+        }
+        let (readiness, events) = display_watch::readiness();
+        let late = Instant::now() >= deadline;
+        match readiness {
+            Readiness::Ready => return Ok(Some(events)),
+            Readiness::Settling(_) if late => return Ok(Some(events)),
+            Readiness::Locked if late => return Err("The screen is locked".to_owned()),
+            Readiness::Locked => std::thread::sleep(WAIT_STEP),
+            Readiness::Settling(left) => std::thread::sleep(left.min(WAIT_STEP)),
+        }
+    }
 }
 
 fn monitor_under_cursor(monitors: &[MonitorInfo], origin: (i32, i32)) -> Option<&MonitorInfo> {

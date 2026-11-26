@@ -7,19 +7,36 @@ use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-/// How long creating the windows may take before a stalled start is reported.
-const STARTUP_LIMIT: Duration = Duration::from_secs(30);
+/// After this long without windows the start is noted as slow in the startup trace.
+const STARTUP_SLOW: Duration = Duration::from_secs(30);
+/// How long creating the windows may take before a stalled start is reported. Right after logon
+/// a busy PC can need well over a minute (a start was seen finishing after 50 s), so this is
+/// generous: only a WebView2 that is truly stuck should get here.
+const STARTUP_LIMIT: Duration = Duration::from_secs(180);
 static STARTED: AtomicBool = AtomicBool::new(false);
 
 /// Reports a start that never finishes (for example WebView2 stuck creating a window) instead of
 /// leaving a process with no window behind. Call once the app is about to build its windows.
 pub fn watch_startup() {
     std::thread::spawn(|| {
-        std::thread::sleep(STARTUP_LIMIT);
+        std::thread::sleep(STARTUP_SLOW);
+        if STARTED.load(Ordering::Acquire) {
+            return;
+        }
+        crate::trace::step(&format!(
+            "windows not ready after {} s; the PC looks busy, still waiting",
+            STARTUP_SLOW.as_secs()
+        ));
+        std::thread::sleep(STARTUP_LIMIT.saturating_sub(STARTUP_SLOW));
+        if STARTED.load(Ordering::Acquire) {
+            return;
+        }
+        report("Snippy could not open its window: Microsoft Edge WebView2 did not respond. Updating or reinstalling the WebView2 Runtime usually fixes this.");
+        // The message box waits for the user; if the windows came up meanwhile, keep running.
         if !STARTED.load(Ordering::Acquire) {
-            report("Snippy could not open its window: Microsoft Edge WebView2 did not respond. Updating or reinstalling the WebView2 Runtime usually fixes this.");
             std::process::exit(1);
         }
+        crate::trace::step("windows came up while the report was shown; Snippy keeps running");
     });
 }
 

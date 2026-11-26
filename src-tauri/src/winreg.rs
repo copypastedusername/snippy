@@ -40,12 +40,44 @@ impl Drop for Key {
 
 /// Creates `HKCU\key` if needed and writes a string value (`None` is the default value).
 pub fn set_user_string(key: &str, name: Option<&str>, value: &str) -> Result<(), String> {
+    set_string(HKEY_CURRENT_USER, key, name, value)
+}
+
+/// Creates `HKLM\key` if needed and writes a string value. Needs administrator rights; only
+/// administrators can change what is stored there.
+pub fn set_machine_string(key: &str, name: &str, value: &str) -> Result<(), String> {
+    set_string(HKEY_LOCAL_MACHINE, key, Some(name), value)
+}
+
+/// Reads a string of up to 4095 characters from HKLM.
+pub fn read_machine_long_string(key: &str, name: &str) -> Option<String> {
+    read_string::<4096>(HKEY_LOCAL_MACHINE, key, name)
+}
+
+/// Deletes one value under HKLM; a missing key or value is not an error.
+pub fn delete_machine_value(key: &str, name: &str) -> Result<(), String> {
+    let (key_name, value_name) = (wide(key), wide(name));
+    // SAFETY: both strings are NUL-terminated.
+    let status = unsafe {
+        RegDeleteKeyValueW(
+            HKEY_LOCAL_MACHINE,
+            PCWSTR(key_name.as_ptr()),
+            PCWSTR(value_name.as_ptr()),
+        )
+    };
+    if status == ERROR_FILE_NOT_FOUND {
+        return Ok(());
+    }
+    check(status, "clean up", key)
+}
+
+fn set_string(root: HKEY, key: &str, name: Option<&str>, value: &str) -> Result<(), String> {
     let key_name = wide(key);
     let mut handle = HKEY::default();
     // SAFETY: the key name is NUL-terminated and `handle` receives the opened key.
     let status = unsafe {
         RegCreateKeyExW(
-            HKEY_CURRENT_USER,
+            root,
             PCWSTR(key_name.as_ptr()),
             0,
             PCWSTR::null(),
@@ -128,13 +160,23 @@ pub fn read_user_dword(key: &str, name: &str) -> Option<u32> {
 
 /// Reads a short string from HKLM; `None` when missing or longer than 255 characters.
 pub fn read_machine_string(key: &str, name: &str) -> Option<String> {
+    read_string::<256>(HKEY_LOCAL_MACHINE, key, name)
+}
+
+/// Reads a string (up to 1023 characters, enough for a quoted long path) from HKCU; `None` when
+/// missing, longer or of another type.
+pub fn read_user_string(key: &str, name: &str) -> Option<String> {
+    read_string::<1024>(HKEY_CURRENT_USER, key, name)
+}
+
+fn read_string<const UNITS: usize>(root: HKEY, key: &str, name: &str) -> Option<String> {
     let (key_name, value_name) = (wide(key), wide(name));
-    let mut buffer = [0_u16; 256];
-    let mut size = std::mem::size_of_val(&buffer) as u32;
+    let mut buffer = vec![0_u16; UNITS];
+    let mut size = (UNITS * std::mem::size_of::<u16>()) as u32;
     // SAFETY: both names are NUL-terminated; `size` is the buffer size in bytes.
     let status = unsafe {
         RegGetValueW(
-            HKEY_LOCAL_MACHINE,
+            root,
             PCWSTR(key_name.as_ptr()),
             PCWSTR(value_name.as_ptr()),
             RRF_RT_REG_SZ,

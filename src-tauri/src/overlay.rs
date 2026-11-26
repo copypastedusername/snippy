@@ -5,12 +5,19 @@ use std::time::Duration;
 use tauri::webview::PageLoadEvent;
 use tauri::window::Color;
 use tauri::{Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl};
+use windows::Win32::Foundation::RECT;
 use windows::Win32::Foundation::{BOOL, HWND, POINT};
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_TRANSITIONS_FORCEDISABLED};
 use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetWindowRect, SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    IsWindowVisible, ShowWindow, SW_HIDE, SW_SHOWNOACTIVATE,
+};
 
 pub const MAIN: &str = "main";
 pub const OVERLAY: &str = "overlay";
@@ -33,6 +40,9 @@ const MAIN_READY_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Set while a startup show of the main window waits for the page's first render.
 static MAIN_PENDING: AtomicBool = AtomicBool::new(false);
+/// Set once the main page has rendered. The page can finish before setup asks to show the window,
+/// so its report must be remembered rather than lost.
+static MAIN_PAGE_READY: AtomicBool = AtomicBool::new(false);
 
 pub fn create_windows(app: &tauri::App) -> Result<(), String> {
     // One WebView2 profile for every window, next to the rest of Snippy's machine-local data,
@@ -53,6 +63,10 @@ pub fn create_windows(app: &tauri::App) -> Result<(), String> {
         .center()
         .visible(false)
         .data_directory(profile.clone())
+        // When WebView2 starts and finishes loading the page, for the startup trace.
+        .on_page_load(|_, payload| {
+            crate::trace::step(&format!("main page load: {:?}", payload.event()));
+        })
         .build()
         .map_err(|error| format!("Failed to create the main window: {error}"))?;
     // Reopen on the screen it was last on (centred when that screen is gone).
@@ -133,6 +147,11 @@ pub fn hide_visible_snippy_windows(app: &tauri::AppHandle) -> bool {
         let Some(window) = app.get_webview_window(label) else {
             continue;
         };
+        if label == FLYOUT {
+            // Shown natively (see `show_without_focus`), so Tauri's own visibility state is stale.
+            hidden_any |= hide_natively(&window);
+            continue;
+        }
         if window.is_visible().unwrap_or(false) {
             hidden_any = true;
             if label == OVERLAY {
@@ -172,6 +191,15 @@ pub fn prepare_overlay(
         .set_size(PhysicalSize::new(size.0, size.1))
         .map_err(|error| format!("Failed to size overlay: {error}"))?;
     place(&overlay)?;
+    *INTENDED
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(RECT {
+        left: origin.0,
+        top: origin.1,
+        right: origin.0 + size.0 as i32,
+        bottom: origin.1 + size.1 as i32,
+    });
+    keep_placed(&overlay, "prepared");
     app.emit("overlay-refresh", ())
         .map_err(|error| format!("Failed to refresh overlay: {error}"))
 }
@@ -194,9 +222,79 @@ pub fn reveal_overlay(app: &tauri::AppHandle) -> Result<(), String> {
     overlay
         .show()
         .map_err(|error| format!("Failed to show overlay: {error}"))?;
-    overlay
+    let focused = overlay
         .set_focus()
-        .map_err(|error| format!("Failed to focus overlay: {error}"))
+        .map_err(|error| format!("Failed to focus overlay: {error}"));
+    keep_placed(&overlay, "shown");
+    // Windows may still move or rescale the window a moment later (displays waking up, a DPI
+    // change), so look again shortly after.
+    let late = overlay.clone();
+    let _ = std::thread::Builder::new()
+        .name("snippy-overlay-placement".to_owned())
+        .spawn(move || {
+            for delay in OVERLAY_RECHECKS {
+                std::thread::sleep(delay);
+                if !late.is_visible().unwrap_or(false) {
+                    return;
+                }
+                keep_placed(&late, "settled");
+            }
+        });
+    focused
+}
+
+/// Where the overlay must be (physical pixels): the whole captured desktop. Kept per snip.
+static INTENDED: std::sync::Mutex<Option<RECT>> = std::sync::Mutex::new(None);
+/// When to look again after showing the overlay.
+const OVERLAY_RECHECKS: [Duration; 2] = [Duration::from_millis(150), Duration::from_millis(700)];
+
+/// Puts the overlay window exactly over the captured desktop if Windows (or a DPI rescale) left
+/// it elsewhere. After waking displays, Windows can move windows onto one monitor, and a window
+/// rescaled for one monitor's DPI shrinks: the overlay then squeezed all monitors into one. The
+/// page follows the window's size, so a corrected window shows the frame right again.
+fn keep_placed(window: &tauri::WebviewWindow, moment: &str) {
+    let Some(target) = *INTENDED
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+    else {
+        return;
+    };
+    let Ok(raw) = window.hwnd() else {
+        return;
+    };
+    let hwnd = HWND(raw.0);
+    // A move can cross a DPI boundary and be rescaled once more, so try a few times.
+    for attempt in 0..3 {
+        let mut actual = RECT::default();
+        // SAFETY: the handle belongs to this live window; the call only reads its rectangle.
+        if unsafe { GetWindowRect(hwnd, &mut actual) }.is_err() || actual == target {
+            return;
+        }
+        log::warn!(
+            "Snip overlay {moment} at {},{} {}x{} instead of {},{} {}x{}; placing it again (try {})",
+            actual.left,
+            actual.top,
+            actual.right - actual.left,
+            actual.bottom - actual.top,
+            target.left,
+            target.top,
+            target.right - target.left,
+            target.bottom - target.top,
+            attempt + 1
+        );
+        // SAFETY: as above; the call only moves and sizes this window.
+        let _ = unsafe {
+            SetWindowPos(
+                hwnd,
+                None,
+                target.left,
+                target.top,
+                target.right - target.left,
+                target.bottom - target.top,
+                SWP_NOZORDER | SWP_NOACTIVATE,
+            )
+        };
+    }
 }
 
 pub fn hide_overlay(app: &tauri::AppHandle) -> Result<(), String> {
@@ -249,30 +347,72 @@ pub fn show_flyout(app: &tauri::AppHandle) -> Result<(), String> {
     let margin = FLYOUT_MARGIN * i64::from(dpi_x) / 96;
     let x = i64::from(info.rcWork.right) - width - margin;
     let y = i64::from(info.rcWork.bottom) - height - margin;
+    // Size, place and show on the window's own thread, in that order: from a worker, Tauri would
+    // queue the size and position while the native show ran at once.
+    let shown = flyout.clone();
     flyout
-        .set_size(PhysicalSize::new(width as u32, height as u32))
-        .map_err(|error| format!("Failed to size flyout: {error}"))?;
-    flyout
-        .set_position(PhysicalPosition::new(x as i32, y as i32))
-        .map_err(|error| format!("Failed to position flyout: {error}"))?;
-    flyout
-        .show()
+        .run_on_main_thread(move || {
+            // Move onto the target monitor first: a size set before the move would be rescaled when
+            // the window crosses to a monitor with another DPI. Then size and place it for good.
+            let position = PhysicalPosition::new(x as i32, y as i32);
+            let placed = shown
+                .set_position(position)
+                .and_then(|()| shown.set_size(PhysicalSize::new(width as u32, height as u32)))
+                .and_then(|()| shown.set_position(position));
+            if let Err(error) = placed {
+                log::warn!("Could not place the flyout: {error}");
+            }
+            if let Err(error) = show_without_focus(&shown) {
+                log::warn!("{error}");
+            }
+        })
         .map_err(|error| format!("Failed to show flyout: {error}"))
+}
+
+/// Shows a window without activating it, the way notifications appear: the window the user works
+/// in keeps the keyboard. Clicking the window still activates it. Tauri does not see this show, so
+/// the window must be hidden with `hide_natively`.
+fn show_without_focus(window: &tauri::WebviewWindow) -> Result<(), String> {
+    let raw = window
+        .hwnd()
+        .map_err(|error| format!("Failed to show flyout: {error}"))?;
+    // SAFETY: the handle belongs to this live window; ShowWindow only changes its visibility.
+    let _ = unsafe { ShowWindow(HWND(raw.0), SW_SHOWNOACTIVATE) };
+    Ok(())
 }
 
 pub fn hide_flyout(app: &tauri::AppHandle) -> Result<(), String> {
     if let Some(flyout) = app.get_webview_window(FLYOUT) {
-        flyout
-            .hide()
-            .map_err(|error| format!("Failed to hide flyout: {error}"))?;
+        hide_natively(&flyout);
     }
     Ok(())
+}
+
+/// Hides a window shown with `show_without_focus`. Tauri did not see that show, so its own
+/// `hide` would think the window is already hidden and do nothing. Returns whether it was visible.
+pub fn hide_natively(window: &tauri::WebviewWindow) -> bool {
+    let Ok(raw) = window.hwnd() else {
+        return false;
+    };
+    let hwnd = HWND(raw.0);
+    // SAFETY: the handle belongs to this live window; these calls only read or change visibility.
+    unsafe {
+        if !IsWindowVisible(hwnd).as_bool() {
+            return false;
+        }
+        let _ = ShowWindow(hwnd, SW_HIDE);
+    }
+    true
 }
 
 /// Shows the main window once its page has rendered (`main_ready`), or after a timeout if the page
 /// never reports, so a slow or broken page cannot keep the window hidden.
 pub fn show_main_when_ready(app: &tauri::AppHandle) {
-    MAIN_PENDING.store(true, Ordering::Release);
+    MAIN_PENDING.store(true, Ordering::SeqCst);
+    if MAIN_PAGE_READY.load(Ordering::SeqCst) {
+        reveal_pending_main(app);
+        return;
+    }
     let worker = app.clone();
     let spawned = std::thread::Builder::new()
         .name("snippy-main-reveal".to_owned())
@@ -283,18 +423,24 @@ pub fn show_main_when_ready(app: &tauri::AppHandle) {
                 crate::trace::step(
                     "main page did not report ready in 3 s; showing the window anyway",
                 );
-                main_ready(&worker);
+                reveal_pending_main(&worker);
             }
         });
     if let Err(error) = spawned {
         log::warn!("Could not start the main window timer ({error}); showing it now");
-        main_ready(app);
+        reveal_pending_main(app);
     }
 }
 
 /// Called by the main page after its first render.
 pub fn main_ready(app: &tauri::AppHandle) {
-    if MAIN_PENDING.swap(false, Ordering::AcqRel) {
+    MAIN_PAGE_READY.store(true, Ordering::SeqCst);
+    reveal_pending_main(app);
+}
+
+/// Shows the main window if a startup show is waiting for it (exactly once).
+fn reveal_pending_main(app: &tauri::AppHandle) {
+    if MAIN_PENDING.swap(false, Ordering::SeqCst) {
         match show_main(app) {
             Ok(()) => crate::trace::step("main window shown: startup complete"),
             Err(error) => {

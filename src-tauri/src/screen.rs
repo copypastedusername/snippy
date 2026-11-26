@@ -21,7 +21,7 @@ pub struct Frame {
     pub rgba: RgbaImage,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct MonitorInfo {
     pub index: usize,
     pub x: i32,
@@ -207,7 +207,70 @@ fn draw_cursor(dc: HDC, origin: (i32, i32)) {
     }
 }
 
-pub fn monitors(origin: (i32, i32)) -> Vec<MonitorInfo> {
+/// The monitors in desktop coordinates, in the order Windows lists them (the order snips number
+/// them in). Compared before and after a grab to tell whether the pixels match the layout.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Layout {
+    monitors: Vec<MonitorInfo>,
+}
+
+impl Layout {
+    pub fn current() -> Self {
+        Self {
+            monitors: monitors((0, 0)),
+        }
+    }
+
+    /// The same monitors in the same places, in whatever order Windows listed them.
+    pub fn same_as(&self, other: &Self) -> bool {
+        let key = |layout: &Self| {
+            let mut keys: Vec<_> = layout
+                .monitors
+                .iter()
+                .map(|m| (m.x, m.y, m.width, m.height, m.primary, m.scale.to_bits()))
+                .collect();
+            keys.sort_unstable();
+            keys
+        };
+        key(self) == key(other)
+    }
+
+    /// Whether `frame` spans exactly the bounding box of these monitors (the virtual screen).
+    pub fn covers(&self, frame: &Frame) -> bool {
+        let bounds = self
+            .monitors
+            .iter()
+            .fold(None::<(i64, i64, i64, i64)>, |bounds, m| {
+                let right = i64::from(m.x) + i64::from(m.width);
+                let bottom = i64::from(m.y) + i64::from(m.height);
+                let (x, y) = (i64::from(m.x), i64::from(m.y));
+                Some(match bounds {
+                    None => (x, y, right, bottom),
+                    Some((l, t, r, b)) => (l.min(x), t.min(y), r.max(right), b.max(bottom)),
+                })
+            });
+        let Some((left, top, right, bottom)) = bounds else {
+            return false;
+        };
+        (i64::from(frame.origin.0), i64::from(frame.origin.1)) == (left, top)
+            && i64::from(frame.rgba.width()) == right - left
+            && i64::from(frame.rgba.height()) == bottom - top
+    }
+
+    /// The monitors with positions relative to the frame's top-left corner.
+    pub fn relative_to(&self, origin: (i32, i32)) -> Vec<MonitorInfo> {
+        self.monitors
+            .iter()
+            .map(|m| MonitorInfo {
+                x: m.x - origin.0,
+                y: m.y - origin.1,
+                ..m.clone()
+            })
+            .collect()
+    }
+}
+
+fn monitors(origin: (i32, i32)) -> Vec<MonitorInfo> {
     struct Context {
         origin: (i32, i32),
         monitors: Vec<MonitorInfo>,
@@ -276,5 +339,82 @@ pub fn cursor_position() -> (i32, i32) {
         (point.x, point.y)
     } else {
         (0, 0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn monitor(index: usize, x: i32, y: i32, width: u32, height: u32) -> MonitorInfo {
+        MonitorInfo {
+            index,
+            x,
+            y,
+            width,
+            height,
+            scale: 1.0,
+            primary: index == 0,
+        }
+    }
+
+    fn frame(origin: (i32, i32), width: u32, height: u32) -> Frame {
+        Frame {
+            origin,
+            rgba: RgbaImage::new(width, height),
+        }
+    }
+
+    /// A portrait monitor on the left and two landscape ones at different heights.
+    fn staggered() -> Layout {
+        Layout {
+            monitors: vec![
+                monitor(0, 0, 0, 1920, 1080),
+                monitor(1, -1080, -400, 1080, 1920),
+                monitor(2, 1920, -200, 1920, 1080),
+            ],
+        }
+    }
+
+    #[test]
+    fn the_same_monitors_listed_in_another_order_are_the_same_layout() {
+        let layout = staggered();
+        let mut reordered = layout.clone();
+        reordered.monitors.reverse();
+        assert!(layout.same_as(&reordered));
+    }
+
+    #[test]
+    fn a_moved_rescaled_or_missing_monitor_is_another_layout() {
+        let layout = staggered();
+        let mut moved = layout.clone();
+        moved.monitors[2].y = 0;
+        assert!(!layout.same_as(&moved));
+        let mut rescaled = layout.clone();
+        rescaled.monitors[0].scale = 1.5;
+        assert!(!layout.same_as(&rescaled));
+        let mut fewer = layout.clone();
+        fewer.monitors.pop();
+        assert!(!layout.same_as(&fewer));
+    }
+
+    #[test]
+    fn a_frame_matches_the_layout_only_when_it_spans_its_bounding_box() {
+        let layout = staggered();
+        // Left -1080, top -400, right 3840, bottom 1520.
+        assert!(layout.covers(&frame((-1080, -400), 4920, 1920)));
+        assert!(!layout.covers(&frame((0, 0), 4920, 1920)));
+        assert!(!layout.covers(&frame((-1080, -400), 3840, 1920)));
+        let empty = Layout {
+            monitors: Vec::new(),
+        };
+        assert!(!empty.covers(&frame((0, 0), 1, 1)));
+    }
+
+    #[test]
+    fn monitors_are_placed_relative_to_the_frame_in_their_original_order() {
+        let relative = staggered().relative_to((-1080, -400));
+        let places: Vec<_> = relative.iter().map(|m| (m.index, m.x, m.y)).collect();
+        assert_eq!(places, vec![(0, 1080, 400), (1, 0, 0), (2, 3000, 200)]);
     }
 }

@@ -5,9 +5,11 @@
 //! installs an exe whose signature matches the public key below, so a compromised download link
 //! cannot push arbitrary code.
 //!
-//! An update is offered when the release has a newer version, or the same version with a
-//! different exe: GitHub reports each asset's SHA-256, which is compared with the running exe, so a
-//! fix re-published under the same version still reaches everyone.
+//! An update is offered when the latest release's exe differs from the running one: GitHub reports
+//! each asset's SHA-256, which is compared with the running exe's. The version number does not
+//! decide anything, so a fix re-published under the same version, or a release whose number went
+//! back, still reaches everyone. When either hash is unknown (GitHub gave none, or the running exe
+//! could not be read), only a newer version is offered.
 //!
 //! Installing swaps the files in place: Windows lets a running exe be renamed, so the old one moves
 //! to `snippy.exe.old`, the new one takes its name, and the new process (started with
@@ -69,7 +71,7 @@ pub struct UpdateNotice {
     pub rebuild: bool,
 }
 
-/// The newest release found by the last check, if it is newer than this build.
+/// The latest release found by the last check, when its exe differs from this one.
 static AVAILABLE: Mutex<Option<Release>> = Mutex::new(None);
 /// The build (version and hash) already announced this session, so the periodic check does not nag.
 static ANNOUNCED: Mutex<Option<String>> = Mutex::new(None);
@@ -101,7 +103,7 @@ pub fn start_background_checks(app: &tauri::AppHandle) {
     });
 }
 
-/// Asks GitHub for the latest release and remembers it when it is newer than this build.
+/// Asks GitHub for the latest release and remembers it when its exe differs from this one.
 pub fn check() -> Result<UpdateStatus, String> {
     let url = format!("https://api.github.com/repos/{REPOSITORY}/releases/latest");
     let body = match http_get(&url, "application/vnd.github+json") {
@@ -114,7 +116,7 @@ pub fn check() -> Result<UpdateStatus, String> {
         Err(error) => return Err(error.to_string()),
     };
     let release = parse_release(&body)?;
-    let newer = release.as_ref().and_then(|release| {
+    let offered = release.as_ref().and_then(|release| {
         let rebuild = offer(
             &release.version,
             release.exe_sha256.as_deref(),
@@ -126,22 +128,22 @@ pub fn check() -> Result<UpdateStatus, String> {
             ..release.clone()
         })
     });
-    *lock(&AVAILABLE) = newer.clone();
+    *lock(&AVAILABLE) = offered.clone();
     Ok(UpdateStatus {
         latest: release
             .as_ref()
             .map(|release| display_version(&release.version)),
-        ..status(newer.as_ref())
+        ..status(offered.as_ref())
     })
 }
 
-fn status(newer: Option<&Release>) -> UpdateStatus {
+fn status(offered: Option<&Release>) -> UpdateStatus {
     UpdateStatus {
         current: display_version(current_version()),
-        latest: newer.map(|release| display_version(&release.version)),
-        available: newer.is_some(),
-        rebuild: newer.is_some_and(|release| release.rebuild),
-        page: newer.map(|release| release.page.clone()),
+        latest: offered.map(|release| display_version(&release.version)),
+        available: offered.is_some(),
+        rebuild: offered.is_some_and(|release| release.rebuild),
+        page: offered.map(|release| release.page.clone()),
     }
 }
 
@@ -190,6 +192,7 @@ pub fn announce_once(app: &tauri::AppHandle) {
 /// Downloads, verifies and installs the newest release, then restarts Snippy on it.
 /// Returns only on failure; on success the app exits.
 pub fn install(app: &tauri::AppHandle) -> Result<(), String> {
+    let installing = Installing::begin().ok_or(ALREADY_INSTALLING)?;
     // Bound first: a guard in the `match` scrutinee would stay locked while `check` relocks it.
     let cached = lock(&AVAILABLE).clone();
     let release = match cached {
@@ -226,17 +229,55 @@ pub fn install(app: &tauri::AppHandle) -> Result<(), String> {
         std::env::current_exe().map_err(|error| format!("Could not find Snippy's exe: {error}"))?;
     let expected = parse_version(&release.version).ok_or("The release has no valid version.")?;
     swap_in(&current, &exe, |staged| {
-        check_staged_version(staged, expected, release.rebuild)
+        check_staged_version(staged, expected)
     })?;
+    // From here the new exe is in place: another install would only fail on the swapped files, so
+    // the guard stays set until this process exits, whether or not the restart works.
+    installing.keep();
     log::info!("Installed Snippy {}; restarting", release.version);
     std::process::Command::new(&current)
         .arg(format!("{AFTER_UPDATE_FLAG}{}", std::process::id()))
         .spawn()
         .map_err(|error| {
-            format!("The update is installed, but Snippy could not restart: {error}")
+            format!(
+                "The update is installed, but Snippy could not restart ({error}). Quit Snippy \
+                 and start it again to use the new version."
+            )
         })?;
     app.exit(0);
     Ok(())
+}
+
+/// The error `install` returns while another install is under way.
+pub const ALREADY_INSTALLING: &str = "An update is already being installed.";
+
+static INSTALLING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// One install at a time; released when an install fails before the exe is swapped.
+struct Installing {
+    release: bool,
+}
+
+impl Installing {
+    fn begin() -> Option<Self> {
+        use std::sync::atomic::Ordering;
+        INSTALLING
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| Self { release: true })
+    }
+
+    fn keep(mut self) {
+        self.release = false;
+    }
+}
+
+impl Drop for Installing {
+    fn drop(&mut self) {
+        if self.release {
+            INSTALLING.store(false, std::sync::atomic::Ordering::Release);
+        }
+    }
 }
 
 /// Checks the downloaded exe against the release signature and the embedded public key.
@@ -259,22 +300,15 @@ fn verify(exe: &[u8], signature_file: &[u8]) -> Result<(), String> {
         .map_err(|_| "The update's signature does not match; it was not installed.".to_owned())
 }
 
-/// The signature proves the exe is ours, not which version it is. Requiring its own version to be
-/// the release's and newer than this build stops an older signed exe being served as an update.
-/// A rebuild of the running version may keep the version; anything else must be newer.
-fn check_staged_version(
-    staged: &Path,
-    expected: (u64, u64, u64),
-    rebuild: bool,
-) -> Result<(), String> {
-    let found = file_version(staged).ok_or("The update carries no version information.")?;
-    let current = parse_version(current_version()).unwrap_or_default();
-    let acceptable = if rebuild {
-        found >= current
-    } else {
-        found > current
-    };
-    if found != expected || !acceptable {
+/// The signature proves the exe is ours, not which release it belongs to: its own version must be
+/// the one the release names. Older numbers are allowed on purpose (the latest release decides).
+fn check_staged_version(staged: &Path, expected: (u64, u64, u64)) -> Result<(), String> {
+    ensure_version(file_version(staged), expected)
+}
+
+fn ensure_version(found: Option<(u64, u64, u64)>, expected: (u64, u64, u64)) -> Result<(), String> {
+    let found = found.ok_or("The update carries no version information.")?;
+    if found != expected {
         return Err(format!(
             "The downloaded exe is version {}.{}.{}, not the {}.{}.{} that was offered.",
             found.0, found.1, found.2, expected.0, expected.1, expected.2
@@ -355,16 +389,24 @@ fn sibling(exe: &Path, suffix: &str) -> PathBuf {
     exe.with_file_name(name)
 }
 
-/// Run first thing at start: after an update, waits for the previous instance to exit (it holds
-/// the single-instance lock) and removes the exe it left behind.
-pub fn finish_previous_update(args: &[String]) {
-    if let Some(pid) = args
-        .iter()
+/// The process that installed this exe and restarted on it (`--after-update=<pid>`), if any.
+pub fn predecessor(args: &[String]) -> Option<u32> {
+    args.iter()
         .find_map(|arg| arg.strip_prefix(AFTER_UPDATE_FLAG))
         .and_then(|pid| pid.parse::<u32>().ok())
-    {
+}
+
+/// Run first thing at start: after an update, gives the previous instance time to exit (it holds
+/// the single-instance lock). `instances::claim` never hands this launch to it, however long it
+/// takes.
+pub fn wait_for_predecessor(predecessor: Option<u32>) {
+    if let Some(pid) = predecessor {
         wait_for_process(pid);
     }
+}
+
+/// Removes the exe a previous update left behind; run once this copy owns the session.
+pub fn remove_leftover() {
     if let Ok(current) = std::env::current_exe() {
         let old = sibling(&current, "old");
         if old.exists() {
@@ -495,22 +537,20 @@ fn parse_release(body: &[u8]) -> Result<Option<Release>, String> {
     }))
 }
 
-/// Whether a release should be offered: `Some(false)` for a newer version, `Some(true)` for the
-/// same version with a different exe, `None` otherwise (never an older version).
+/// Whether the latest release should be offered, and if so whether it is a rebuild (`true`: same
+/// version, different exe). Any exe other than the running one is offered, whatever its version;
+/// without both hashes only a newer version is.
 fn offer(
     release_version: &str,
     release_sha256: Option<&str>,
     current_version: &str,
     own_sha256: Option<&str>,
 ) -> Option<bool> {
-    if is_newer(release_version, current_version) {
-        return Some(false);
-    }
     let same_version = parse_version(release_version).is_some()
         && parse_version(release_version) == parse_version(current_version);
     match (release_sha256, own_sha256) {
-        (Some(release), Some(own)) if same_version && release != own => Some(true),
-        _ => None,
+        (Some(release), Some(own)) => (release != own).then_some(same_version),
+        _ => is_newer(release_version, current_version).then_some(false),
     }
 }
 
@@ -572,16 +612,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn same_version_with_a_different_exe_is_offered_as_a_rebuild() {
+    fn any_other_exe_is_offered_whatever_its_version() {
         let a = "a".repeat(64);
         let b = "b".repeat(64);
-        assert_eq!(offer("0.2", Some(&a), "0.1.0", Some(&a)), Some(false));
+        assert_eq!(offer("0.2", Some(&a), "0.1.0", Some(&b)), Some(false));
         assert_eq!(offer("0.1", Some(&a), "0.1.0", Some(&b)), Some(true));
+        // A lower number is still offered when its exe differs.
+        assert_eq!(offer("0.1.1", Some(&a), "0.1.4", Some(&b)), Some(false));
+        // The same exe is never offered, whatever the number says.
         assert_eq!(offer("0.1", Some(&a), "0.1.0", Some(&a)), None);
-        // Without a hash from GitHub only a newer version is offered.
+        assert_eq!(offer("0.2", Some(&a), "0.1.0", Some(&a)), None);
+        // Without both hashes only a newer version is offered.
+        assert_eq!(offer("0.2", None, "0.1.0", Some(&a)), Some(false));
         assert_eq!(offer("0.1", None, "0.1.0", Some(&a)), None);
-        // An older version is never offered, whatever its hash.
-        assert_eq!(offer("0.0.9", Some(&a), "0.1.0", Some(&b)), None);
+        assert_eq!(offer("0.0.9", None, "0.1.0", None), None);
+    }
+
+    #[test]
+    fn a_missing_hash_on_either_side_falls_back_to_the_version() {
+        let a = "a".repeat(64);
+        assert_eq!(offer("0.2", Some(&a), "0.1.0", None), Some(false));
+        assert_eq!(offer("0.1", Some(&a), "0.1.0", None), None);
+        assert_eq!(offer("0.0.9", None, "0.1.0", Some(&a)), None);
+        assert_eq!(offer("0.1", None, "0.1.0", None), None);
+    }
+
+    #[test]
+    fn the_installed_exe_must_carry_the_offered_version_even_when_lower() {
+        assert!(ensure_version(Some((0, 1, 1)), (0, 1, 1)).is_ok());
+        assert!(ensure_version(Some((0, 1, 4)), (0, 1, 1)).is_err());
+        assert!(ensure_version(None, (0, 1, 1)).is_err());
     }
 
     #[test]

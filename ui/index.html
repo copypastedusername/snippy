@@ -273,6 +273,20 @@
                 </div>
                 <input id="screenclipSwitch" class="switch" type="checkbox">
               </div>
+              <div id="windowsOverlayRow" class="setting-row" hidden>
+                <div class="setting-copy">
+                  <label for="windowsOverlayButton">Windows' own snipping overlay</label>
+                  <span id="windowsOverlayNote" class="description"></span>
+                </div>
+                <button id="windowsOverlayButton" class="btn" type="button">Turn off</button>
+              </div>
+              <div id="windowsHotkeyRow" class="setting-row" hidden>
+                <div class="setting-copy">
+                  <label for="windowsHotkeySwitch">Turn off Windows' own Win+Shift+S</label>
+                  <span id="windowsHotkeyNote" class="description">If the Snipping Tool still opens sometimes. Win+S Search turns off too. Takes effect after you sign out and back in.</span>
+                </div>
+                <input id="windowsHotkeySwitch" class="switch" type="checkbox">
+              </div>
               <div class="divider"></div>
               <div class="setting-row">
                 <div class="setting-copy">
@@ -296,7 +310,7 @@
                   <ol id="defaultAppsSteps" class="steps">
                     <li>Click <b>Open Default apps</b> — Windows opens Snippy's page.</li>
                     <li>Find <b>MS-SCREENCLIP</b> in the list and click the app shown next to it.</li>
-                    <li>Choose <b>Snippy</b>. Windows 10: scroll to <i>Choose default apps by protocol</i>, then MS-SCREENCLIP.</li>
+                    <li>Choose <b>Snippy</b>.</li>
                   </ol>
                 </div>
                 <button id="defaultAppsButton" class="btn accent" type="button">Open Default apps</button>

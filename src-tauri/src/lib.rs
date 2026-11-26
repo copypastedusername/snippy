@@ -4,10 +4,13 @@ mod clipboard;
 mod commands;
 mod config;
 mod crash;
+mod display_watch;
 mod editor;
 mod elevation;
+mod hidden_window;
 mod imageops;
 mod instances;
+mod keyhook;
 mod notify;
 mod ocr;
 mod overlay;
@@ -18,9 +21,11 @@ mod screenclip;
 mod shortcuts;
 mod sound;
 mod storage;
+mod task_scheduler;
 mod trace;
 mod tray;
 mod updater;
+mod windows_overlay;
 mod winlist;
 mod winreg;
 
@@ -92,6 +97,9 @@ pub fn lock<'a, T>(mutex: &'a Mutex<T>, what: &str) -> Result<MutexGuard<'a, T>,
         .map_err(|_| format!("The {what} lock is poisoned"))
 }
 
+/// One log file's size limit; with the previous file kept, the logs take about 8 MB at most.
+const LOG_FILE_BYTES: u128 = 4 * 1024 * 1024;
+
 /// Logs sit beside the config in `%APPDATA%\Snippy\logs`; the OS log directory would create a
 /// second, identifier-named folder for no benefit.
 fn log_target() -> tauri_plugin_log::TargetKind {
@@ -101,46 +109,6 @@ fn log_target() -> tauri_plugin_log::TargetKind {
             file_name: Some("snippy".to_owned()),
         },
         Err(_) => tauri_plugin_log::TargetKind::LogDir { file_name: None },
-    }
-}
-
-/// Hands the session over to an elevated instance. Returns true when this process should exit.
-///
-/// A registered logon task already runs with the highest available privileges, so Task Scheduler
-/// starts the elevated instance silently; the UAC prompt is only the fallback for users who did
-/// not enable "Start with Windows".
-fn elevate() -> bool {
-    if autostart::is_autostart_enabled() {
-        match autostart::run_task() {
-            Ok(()) => return true,
-            Err(error) => log::warn!("Could not start the elevated logon task: {error}"),
-        }
-    }
-    match elevation::relaunch_elevated() {
-        Ok(true) => true,
-        Ok(false) => {
-            log::warn!("Elevation was declined; continuing without administrator rights");
-            false
-        }
-        Err(error) => {
-            log::warn!("Could not relaunch elevated: {error}");
-            false
-        }
-    }
-}
-
-/// Relaunches elevated when the config asks for it. Returns true when this process should exit.
-fn should_hand_over_to_elevated(config: &Config) -> bool {
-    if !config.behavior.run_as_admin {
-        return false;
-    }
-    match elevation::is_elevated() {
-        Ok(false) => elevate(),
-        Ok(true) => false,
-        Err(error) => {
-            log::warn!("Could not determine elevation status: {error}");
-            false
-        }
     }
 }
 
@@ -161,7 +129,9 @@ fn hide_main_instead_of_closing(window: &tauri::Window, event: &tauri::WindowEve
         }
         overlay::FLYOUT => {
             api.prevent_close();
-            let _ = window.hide();
+            if let Some(flyout) = window.get_webview_window(overlay::FLYOUT) {
+                overlay::hide_natively(&flyout);
+            }
         }
         overlay::MAIN => {
             let close_to_tray = window
@@ -277,16 +247,28 @@ fn refresh_screenclip_registration(config: &Config) {
 
 pub fn run() {
     let args: Vec<String> = std::env::args().collect();
+    // The elevated helper that turns Windows 10's own clipping overlay off or on: nothing else
+    // starts (no window, no single-instance claim), it only does that and exits with a code.
+    if args.get(1).map(String::as_str) == Some(windows_overlay::HELPER_FLAG) {
+        let code = match args.as_slice() {
+            [_, _, action] => windows_overlay::run_helper(action),
+            _ => windows_overlay::UNSUPPORTED,
+        };
+        std::process::exit(code);
+    }
     // The crash hook first, then the startup trace (startup.log, and a console with --debug), so
     // even a start that shows nothing leaves a record of how far it got.
     crash::install();
     trace::init(&args);
     trace::environment_report();
-    // After a self-update, wait for the old instance to exit before claiming the session.
-    updater::finish_previous_update(&args);
-    if let instances::Outcome::Exit = instances::claim(&args) {
+    // After a self-update, wait for the old instance to exit before claiming the session; the
+    // launch is never handed to it, even when it is slow to go.
+    let predecessor = updater::predecessor(&args);
+    updater::wait_for_predecessor(predecessor);
+    if let instances::Outcome::Exit = instances::claim(&args, predecessor) {
         return;
     }
+    updater::remove_leftover();
     let (initial_config, load_error) = match config::load() {
         Ok(config) => (config, None),
         Err(error) => {
@@ -310,7 +292,7 @@ pub fn run() {
         screenclip::is_screenclip_launch(&args) || notify::parse_link(&args).is_some();
     // Handing a Win+Shift+S launch over to an elevated instance would lose the request (the
     // logon task takes no arguments), so such a launch snips at normal integrity instead.
-    if !screenclip_launch && should_hand_over_to_elevated(&initial_config) {
+    if !screenclip_launch && elevation::hand_over_if_configured(&initial_config) {
         trace::step("handed over to an elevated instance; this process exits");
         return;
     }
@@ -321,17 +303,34 @@ pub fn run() {
     trace::step("building the app (plugins: dialog, global-shortcut, log)");
 
     let builder = tauri::Builder::default()
+        // Tao otherwise registers Snippy's windows for Raw Input from the keyboard, and while one of
+        // them has the keyboard Windows stops calling Snippy's own low-level keyboard hook, so
+        // Win+Shift+S went to Windows 10's snipping instead (keyhook.rs; wry issue 1761). Snippy
+        // reads no device events.
+        .device_event_filter(tauri::DeviceEventFilter::Always)
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(
             tauri_plugin_log::Builder::default()
                 .level(log::LevelFilter::Info)
+                // The log stays small: the current file up to about 4 MB and the one before it.
+                .max_file_size(LOG_FILE_BYTES)
+                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(1))
                 .clear_targets()
                 .target(tauri_plugin_log::Target::new(log_target()))
                 .build(),
         )
         .manage(AppState::new(initial_config))
         .on_window_event(|window, event| {
+            if window.label() == editor::EDITOR {
+                match event {
+                    tauri::WindowEvent::CloseRequested { api, .. } => {
+                        editor::close_requested(window, api);
+                    }
+                    tauri::WindowEvent::Destroyed => editor::closed(window.app_handle()),
+                    _ => {}
+                }
+            }
             if window.label() == overlay::MAIN {
                 if let tauri::WindowEvent::Moved(position) = event {
                     placement::remember(*position);
@@ -359,6 +358,11 @@ pub fn run() {
             shortcuts::register(app.handle());
             trace::step("setup: hotkeys registered");
             refresh_screenclip_registration(&config);
+            std::thread::spawn(|| {
+                if let Err(error) = autostart::repair_task_path() {
+                    log::warn!("Could not check the logon task: {error}");
+                }
+            });
             updater::start_background_checks(app.handle());
             if let Some(action) = notify::parse_link(&args) {
                 notify::handle_link(app.handle(), action);
@@ -375,6 +379,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_config,
+            commands::config_recovery,
             commands::set_config,
             commands::reset_config,
             commands::pick_output_directory,
@@ -405,18 +410,29 @@ pub fn run() {
             commands::install_update,
             commands::windows_shortcut_status,
             commands::open_keyboard_settings,
+            commands::set_windows_hotkey_off,
+            commands::set_windows_overlay_disabled,
             commands::main_ready,
             commands::open_editor,
             commands::editor_info,
             commands::editor_pixels,
+            commands::editor_unsaved,
             commands::editor_ocr,
             commands::ocr_languages,
             commands::editor_export,
         ]);
 
-    if let Err(error) = builder.run(tauri::generate_context!()) {
-        crash::report(&format!("Snippy could not start: {error}"));
-        std::process::exit(1);
-    }
+    let app = match builder.build(tauri::generate_context!()) {
+        Ok(app) => app,
+        Err(error) => {
+            crash::report(&format!("Snippy could not start: {error}"));
+            std::process::exit(1);
+        }
+    };
+    app.run(|_, event| {
+        if let tauri::RunEvent::Exit = event {
+            instances::closing();
+        }
+    });
     trace::step("event loop ended; Snippy exits");
 }

@@ -4,12 +4,14 @@ fn main() {
     let commands = &[
         "cancel_snip",
         "check_for_updates",
+        "config_recovery",
         "copy_capture",
         "delete_capture",
         "editor_export",
         "editor_info",
         "editor_ocr",
         "editor_pixels",
+        "editor_unsaved",
         "finish_freeform",
         "finish_monitor",
         "finish_rect",
@@ -38,6 +40,8 @@ fn main() {
         "reveal_path",
         "set_autostart",
         "set_config",
+        "set_windows_hotkey_off",
+        "set_windows_overlay_disabled",
         "start_snip",
         "windows_shortcut_status",
     ];

@@ -1,7 +1,7 @@
 //! Global hotkeys that start a snip in each capture mode.
 
 use crate::config::CaptureMode;
-use crate::{capture, AppState};
+use crate::{capture, keyhook, AppState};
 use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
@@ -17,6 +17,7 @@ static REGISTERED: Mutex<Vec<Shortcut>> = Mutex::new(Vec::new());
 pub fn unregister(app: &tauri::AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
     let _guard = crate::lock(&state.shortcuts, "shortcut")?;
+    keyhook::set_active(app, false)?;
     release_all(app)
 }
 
@@ -70,13 +71,20 @@ pub fn register(app: &tauri::AppHandle) {
         }
     }
 
-    // Only supported mechanisms, no keyboard hooks (see screenclip.rs):
-    // - Win+Shift+S normally belongs to Explorer, which opens the ms-screenclip: link; the user
-    //   picks Snippy for it once in Default apps. Where Explorer leaves it free (trimmed builds)
-    //   Snippy registers it directly.
-    // - Print Screen is an ordinary hotkey; it reaches Snippy once Windows' own "Print Screen opens
-    //   screen capture" option is off, which the user changes in Settings (the page guides them).
-    let owns_win_shift_s = behavior.handle_screenclip && claim(app, WIN_SHIFT_S);
+    // Windows 10 starts its own clipping for Win+Shift+S whatever app the links open, so only a
+    // keyboard hook takes it there (see keyhook.rs). Elsewhere, registering a Windows key helps
+    // where Windows leaves it free; success does not prove the key reaches Snippy.
+    let hook_win_shift_s =
+        behavior.handle_screenclip && keyhook::needed(crate::screenclip::windows_build());
+    if let Err(error) = keyhook::set_active(app, hook_win_shift_s) {
+        log::warn!("{error}");
+        failures.push(format!("Win+Shift+S ({error})"));
+    }
+    let owns_win_shift_s = if hook_win_shift_s {
+        keyhook::is_active()
+    } else {
+        behavior.handle_screenclip && claim(app, WIN_SHIFT_S)
+    };
     let owns_print_screen = behavior.handle_print_screen && claim(app, PRINT_SCREEN);
     state
         .screenclip_hotkey

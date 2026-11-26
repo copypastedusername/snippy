@@ -1,8 +1,10 @@
 //! Lets Snippy answer the keys Windows keeps for screen capture: Win+Shift+S and Print Screen.
 //!
-//! Windows answers Win+Shift+S (and Print Screen, when "Use the Print Screen key to open screen
-//! capture" is on) by opening an `ms-screenclip:` link. Snippy registers itself, per user and
-//! without elevation, as an application that can open those links. Windows protects the user's
+//! Windows 11 answers Win+Shift+S (and Print Screen, when "Use the Print Screen key to open
+//! screen capture" is on) by opening an `ms-screenclip:` link. Windows 10 opens the link only for
+//! Print Screen; for Win+Shift+S it starts its own clipping, which `keyhook.rs` takes instead.
+//! Snippy registers itself, per user and without elevation, as an application that can open
+//! `ms-screenclip:` and `ms-screensketch:` (Snip & Sketch's link). Windows protects the user's
 //! choice of default handler, so the user picks Snippy once: in the "choose an app" prompt (with
 //! "Always") or under Settings > Default apps. The launch arrives as
 //! `snippy.exe --screenclip "<link>"` and starts a snip in the default capture mode.
@@ -32,7 +34,10 @@ const PRINT_SCREEN_VALUE: &str = "PrintScreenKeyForSnippingEnabled";
 /// unless the user turned it off; Windows 10 keeps it off.
 const PRINT_SCREEN_DEFAULT_ON_BUILD: u32 = 22621;
 
-const SCHEME: &str = "ms-screenclip";
+/// The links Windows opens for its screen capture keys. Both start a snip in Snippy.
+const SCHEMES: [&str; 2] = ["ms-screenclip", "ms-screensketch"];
+/// Windows 11's first build.
+const WINDOWS_11_BUILD: u32 = 22000;
 const APP_NAME: &str = "Snippy";
 const PROG_ID: &str = "Snippy.ScreenClip";
 const PROG_ID_KEY: &str = r"Software\Classes\Snippy.ScreenClip";
@@ -76,11 +81,25 @@ pub fn windows_build() -> Option<u32> {
     .ok()
 }
 
-/// The app Windows opens for `ms-screenclip:` links (used while Snippy is not running), and
-/// whether that is Snippy. `None` when no app is set.
-pub fn current_handler() -> Option<(String, bool)> {
+/// Windows 10 and older, where Win+Shift+S bypasses the links.
+pub fn before_windows_11(build: Option<u32>) -> bool {
+    build.is_some_and(|build| build < WINDOWS_11_BUILD)
+}
+
+/// The links that should open Snippy on this Windows build.
+pub fn required_schemes(build: Option<u32>) -> &'static [&'static str] {
+    if before_windows_11(build) {
+        &SCHEMES
+    } else {
+        &SCHEMES[..1]
+    }
+}
+
+/// The app Windows opens for `scheme` links, and whether that is Snippy. `None` when no app is
+/// set.
+pub fn current_handler(scheme: &str) -> Option<(String, bool)> {
     let query = |what| {
-        let scheme: Vec<u16> = SCHEME.encode_utf16().chain(std::iter::once(0)).collect();
+        let scheme: Vec<u16> = scheme.encode_utf16().chain(std::iter::once(0)).collect();
         let mut buffer = [0_u16; 512];
         let mut length = buffer.len() as u32;
         // SAFETY: the scheme is NUL-terminated and `length` is the buffer size in characters.
@@ -107,7 +126,7 @@ pub fn current_handler() -> Option<(String, bool)> {
     Some((name, prog_id.eq_ignore_ascii_case(PROG_ID)))
 }
 
-/// Registers (or refreshes, after the portable exe moved) Snippy as an `ms-screenclip:` handler.
+/// Registers (or refreshes, after the portable exe moved) Snippy as a handler of both links.
 pub fn register(executable: &Path) -> Result<(), String> {
     let executable = executable.to_string_lossy();
     let command = format!("\"{executable}\" {LAUNCH_FLAG} \"%1\"");
@@ -126,11 +145,13 @@ pub fn register(executable: &Path) -> Result<(), String> {
         Some("ApplicationDescription"),
         "Takes a snip when you press Win+Shift+S or Print Screen.",
     )?;
-    winreg::set_user_string(
-        &format!(r"{CAPABILITIES_KEY}\URLAssociations"),
-        Some(SCHEME),
-        PROG_ID,
-    )?;
+    for scheme in SCHEMES {
+        winreg::set_user_string(
+            &format!(r"{CAPABILITIES_KEY}\URLAssociations"),
+            Some(scheme),
+            PROG_ID,
+        )?;
+    }
     winreg::set_user_string(
         REGISTERED_APPLICATIONS_KEY,
         Some(APP_NAME),
@@ -156,7 +177,17 @@ fn notify_shell() {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_screenclip_launch, print_screen_routed};
+    use super::{is_screenclip_launch, print_screen_routed, required_schemes};
+
+    #[test]
+    fn windows_10_needs_both_links_and_windows_11_only_screenclip() {
+        assert_eq!(
+            required_schemes(Some(19045)),
+            ["ms-screenclip", "ms-screensketch"]
+        );
+        assert_eq!(required_schemes(Some(22631)), ["ms-screenclip"]);
+        assert_eq!(required_schemes(None), ["ms-screenclip"]);
+    }
 
     #[test]
     fn only_the_exact_flag_after_the_executable_counts() {

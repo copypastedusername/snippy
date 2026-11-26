@@ -22,6 +22,13 @@ $env:CARGO_ENCODED_RUSTFLAGS = $flags -join [char]0x1F
 
 Push-Location $root
 try {
+    # The disk this builds on may be nearly full: drop the debug build and the previous release
+    # build of Snippy itself (dependencies are kept, so only Snippy is compiled again).
+    $target = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $root 'src-tauri\target' }
+    Remove-Item (Join-Path $target 'debug') -Recurse -Force -ErrorAction SilentlyContinue
+    cargo clean --release --package snippy --manifest-path (Join-Path $root 'src-tauri\Cargo.toml')
+    if ($LASTEXITCODE -ne 0) { throw "cargo clean failed with exit code $LASTEXITCODE" }
+
     npx tauri build
     if ($LASTEXITCODE -ne 0) { throw "tauri build failed with exit code $LASTEXITCODE" }
 } finally {

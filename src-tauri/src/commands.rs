@@ -53,6 +53,12 @@ pub fn get_config(state: tauri::State<'_, AppState>) -> Result<Config, String> {
     state.config()
 }
 
+/// What Snippy had to repair in the settings file at start (shown once on the main page).
+#[tauri::command]
+pub fn config_recovery() -> Option<String> {
+    crate::config::recovery_notice()
+}
+
 #[tauri::command]
 pub async fn set_config(app: tauri::AppHandle, config: Config) -> Result<Config, String> {
     blocking("Config", move || apply_config(&app, config)).await
@@ -82,13 +88,15 @@ fn apply_config(app: &tauri::AppHandle, mut config: Config) -> Result<Config, St
         crate::lock(&state.recents, "recent captures")?.invalidate();
     }
     if previous.behavior.run_as_admin != config.behavior.run_as_admin {
-        // The logon task's privilege level follows "Run as administrator": re-register it.
-        let elevated = config.behavior.run_as_admin;
+        // The logon task's privilege level follows "Run as administrator".
+        let app = app.clone();
         std::thread::spawn(move || {
-            if autostart::is_autostart_enabled() {
-                if let Err(error) = autostart::set_enabled(true, elevated) {
-                    log::warn!("Could not update the logon task's privileges: {error}");
-                }
+            let setting = || {
+                let config = app.state::<AppState>().config()?;
+                Ok(config.behavior.run_as_admin)
+            };
+            if let Err(error) = autostart::follow_privilege_setting(setting) {
+                log::warn!("Could not update the logon task's privileges: {error}");
             }
         });
     }
@@ -135,6 +143,12 @@ fn windows_shortcuts_changed(previous: &Config, next: &Config) -> bool {
 pub struct WindowsShortcutStatus {
     /// Snippy holds Win+Shift+S itself (Windows left it free).
     pub win_shift_s_taken: bool,
+    /// Windows 10: Snippy takes Win+Shift+S from Windows (a keyboard hook, and the hotkey when free).
+    pub win_shift_s_hooked: bool,
+    /// Windows 10: Explorer's own Win+S hotkeys (Search, Win+Shift+S) are turned off.
+    pub windows_hotkey_off: bool,
+    /// Windows 10: whether Windows' own clipping overlay is in place or turned off by Snippy.
+    pub windows_overlay: crate::windows_overlay::OverlayStatus,
     /// Snippy holds Print Screen as an ordinary hotkey.
     pub print_screen_taken: bool,
     /// Windows' "Print Screen opens screen capture" option: on, off, or unknown (never set on a
@@ -145,6 +159,30 @@ pub struct WindowsShortcutStatus {
     /// The app Windows opens for Win+Shift+S (and for Snippy-less starts).
     pub closed_handler: Option<String>,
     pub closed_handler_is_snippy: bool,
+    /// The links (as Default apps lists them, e.g. `MS-SCREENSKETCH`) still opening another app.
+    pub links_to_set: Vec<String>,
+}
+
+/// Windows 10: turns Explorer's own Win+S hotkeys (Search and Win+Shift+S) off or back on, so that
+/// Win+Shift+S reaches Snippy as an ordinary hotkey after the next sign-in.
+#[tauri::command]
+pub async fn set_windows_hotkey_off(off: bool) -> Result<(), String> {
+    blocking("Windows hotkey", move || {
+        crate::keyhook::set_windows_hotkey_off(off)
+    })
+    .await
+}
+
+/// Windows 10: turns Windows' own screen-clipping overlay off or back on (asks for administrator
+/// rights). Returns the new status.
+#[tauri::command]
+pub async fn set_windows_overlay_disabled(
+    disabled: bool,
+) -> Result<crate::windows_overlay::OverlayStatus, String> {
+    blocking("Windows overlay", move || {
+        crate::windows_overlay::set_disabled(disabled)
+    })
+    .await
 }
 
 /// Opens Windows' keyboard settings ("Use the Print Screen key to open screen capture").
@@ -164,14 +202,33 @@ pub async fn windows_shortcut_status(
         let state = app.state::<AppState>();
         let load =
             |flag: &std::sync::atomic::AtomicBool| flag.load(std::sync::atomic::Ordering::Acquire);
-        let handler = screenclip::current_handler();
+        let build = screenclip::windows_build();
+        let handlers: Vec<_> = screenclip::required_schemes(build)
+            .iter()
+            .map(|scheme| (*scheme, screenclip::current_handler(scheme)))
+            .collect();
+        let not_snippy: Vec<_> = handlers
+            .iter()
+            .filter(|(_, handler)| !handler.as_ref().is_some_and(|(_, snippy)| *snippy))
+            .collect();
+        // The app the user sees instead of Snippy: the first link that does not open Snippy.
+        let closed_handler = not_snippy
+            .iter()
+            .find_map(|(_, handler)| handler.as_ref().map(|(name, _)| name.clone()));
         Ok(WindowsShortcutStatus {
             win_shift_s_taken: load(&state.screenclip_hotkey),
+            win_shift_s_hooked: crate::keyhook::is_active(),
+            windows_hotkey_off: crate::keyhook::windows_hotkey_off(),
+            windows_overlay: crate::windows_overlay::status(),
             print_screen_taken: load(&state.print_screen_hotkey),
             print_screen_by_windows: screenclip::windows_routes_print_screen(),
-            windows_build: screenclip::windows_build(),
-            closed_handler_is_snippy: handler.as_ref().is_some_and(|(_, snippy)| *snippy),
-            closed_handler: handler.map(|(name, _)| name),
+            windows_build: build,
+            closed_handler_is_snippy: not_snippy.is_empty(),
+            links_to_set: not_snippy
+                .iter()
+                .map(|(scheme, _)| scheme.to_ascii_uppercase())
+                .collect(),
+            closed_handler,
         })
     })
     .await
@@ -465,8 +522,17 @@ pub fn editor_info(app: tauri::AppHandle) -> Result<crate::editor::EditorInfo, S
 }
 
 #[tauri::command]
-pub fn editor_pixels(app: tauri::AppHandle) -> Result<tauri::ipc::Response, String> {
-    crate::editor::pixels(&app).map(tauri::ipc::Response::new)
+pub fn editor_pixels(
+    app: tauri::AppHandle,
+    document: Option<u64>,
+) -> Result<tauri::ipc::Response, String> {
+    crate::editor::pixels(&app, document).map(tauri::ipc::Response::new)
+}
+
+/// The editor page reports whether it holds changes that were not saved or copied.
+#[tauri::command]
+pub fn editor_unsaved(unsaved: bool) {
+    crate::editor::set_unsaved(unsaved);
 }
 
 /// Reads the text in what the editor shows (the picture with its marks, cropped), sent as a raw
@@ -512,12 +578,55 @@ pub async fn editor_export(
         .and_then(|value| value.to_str().ok())
         .ok_or_else(|| "Missing editor action".to_owned())?
         .parse()?;
+    // The document the picture was drawn from, so it is never saved under another one's name.
+    let document = request
+        .headers()
+        .get("snippy-document")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok());
     let png = png.clone();
-    blocking("Editor", move || crate::editor::export(&app, &png, action)).await
+    blocking("Editor", move || {
+        crate::editor::export(&app, &png, action, document)
+    })
+    .await
 }
 
-/// The main page has rendered for the first time; a pending startup show happens now.
+/// The main page has rendered for the first time; a pending startup show happens now. `stages`
+/// are the page's own milestones (name, milliseconds since navigation), kept in the startup trace.
 #[tauri::command]
-pub fn main_ready(app: tauri::AppHandle) {
+pub fn main_ready(app: tauri::AppHandle, stages: Option<Vec<(String, u32)>>) {
+    if let Some(stages) = stages {
+        crate::trace::step(&format!("main page stages: {}", describe_stages(&stages)));
+    }
     overlay::main_ready(&app);
+}
+
+/// `script 120 ms, config 180 ms, ...`, bounded so a page cannot flood the trace.
+fn describe_stages(stages: &[(String, u32)]) -> String {
+    stages
+        .iter()
+        .take(8)
+        .map(|(name, ms)| {
+            let name: String = name
+                .chars()
+                .filter(char::is_ascii_alphanumeric)
+                .take(16)
+                .collect();
+            format!("{name} {ms} ms")
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::describe_stages;
+
+    #[test]
+    fn page_stages_are_listed_briefly_and_safely() {
+        let stages = vec![("script".to_owned(), 120), ("con\nfig!".to_owned(), 180)];
+        assert_eq!(describe_stages(&stages), "script 120 ms, config 180 ms");
+        let many: Vec<_> = (0..20).map(|i| (format!("s{i}"), i)).collect();
+        assert_eq!(describe_stages(&many).matches(" ms").count(), 8);
+    }
 }

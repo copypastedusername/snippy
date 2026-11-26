@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-windows-hotkey-off"
+description = "Enables the set_windows_hotkey_off command without any pre-configured scope."
+commands.allow = ["set_windows_hotkey_off"]
+
+[[permission]]
+identifier = "deny-set-windows-hotkey-off"
+description = "Denies the set_windows_hotkey_off command without any pre-configured scope."
+commands.deny = ["set_windows_hotkey_off"]

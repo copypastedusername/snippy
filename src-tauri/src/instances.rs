@@ -11,7 +11,7 @@
 //! windows exist, like builds whose WebView2 never started) is reported, and the user may close it,
 //! after the process is verified to be Snippy, so this launch can start.
 //!
-//! Snippy 0.1 and 0.1.1 used the single-instance plugin instead (`com.snippy.tool-sim` mutex,
+//! Early pre-release builds used the single-instance plugin instead (`com.snippy.tool-sim` mutex,
 //! `com.snippy.tool-sic` receiver). Such a copy cannot take launches from this protocol, so it is
 //! recognised as an older version and offered to be replaced.
 
@@ -27,17 +27,14 @@ use windows::Win32::System::DataExchange::COPYDATASTRUCT;
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::{
     CreateMutexW, GetProcessTimes, OpenMutexW, OpenProcess, QueryFullProcessImageNameW,
     TerminateProcess, WaitForSingleObject, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
     PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, SYNCHRONIZATION_SYNCHRONIZE,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    ChangeWindowMessageFilterEx, CreateWindowExW, DefWindowProcW, DispatchMessageW, FindWindowW,
-    GetMessageW, GetWindowThreadProcessId, RegisterClassExW, SendMessageTimeoutW, TranslateMessage,
-    MSG, MSGFLT_ALLOW, SMTO_ABORTIFHUNG, SMTO_ERRORONEXIT, WINDOW_EX_STYLE, WM_COPYDATA,
-    WNDCLASSEXW, WS_OVERLAPPED,
+    ChangeWindowMessageFilterEx, DefWindowProcW, FindWindowW, GetWindowThreadProcessId,
+    SendMessageTimeoutW, MSGFLT_ALLOW, SMTO_ABORTIFHUNG, SMTO_ERRORONEXIT, WM_COPYDATA,
 };
 
 const MUTEX: &str = "Local\\Snippy.Instance";
@@ -72,12 +69,14 @@ pub enum Outcome {
     Exit,
 }
 
-/// Claims the session for this process, or hands the launch to the copy that has it.
-pub fn claim(args: &[String]) -> Outcome {
+/// Claims the session for this process, or hands the launch to the copy that has it. The launch is
+/// never handed to `predecessor`: after an update that is the copy on its way out, and taking the
+/// launch would leave no Snippy running once it is gone.
+pub fn claim(args: &[String], predecessor: Option<u32>) -> Outcome {
     // An older, plugin-based Snippy holds a different mutex and never answers our receiver.
     if legacy_copy_running() {
-        crate::trace::step("single instance: an older Snippy (0.1/0.1.1) is running");
-        return recover_from_other_copy(args, true);
+        crate::trace::step("single instance: an early pre-release Snippy is running");
+        return recover_from_other_copy(args, true, predecessor);
     }
     let deadline = Instant::now() + GRACE;
     let mut announced = false;
@@ -89,7 +88,7 @@ pub fn claim(args: &[String]) -> Outcome {
             crate::trace::step("single instance: another Snippy holds the session");
             announced = true;
         }
-        if let Some(window) = find(RECEIVER_CLASS, RECEIVER_TITLE) {
+        if let Some(window) = receiver(predecessor) {
             match hand_over(window, args) {
                 Some(ACCEPTED) => {
                     crate::trace::step("handed this launch to the running Snippy; exiting");
@@ -102,7 +101,7 @@ pub fn claim(args: &[String]) -> Outcome {
             }
         }
         if Instant::now() >= deadline {
-            return recover_from_other_copy(args, false);
+            return recover_from_other_copy(args, false, predecessor);
         }
         std::thread::sleep(RETRY);
     }
@@ -151,6 +150,11 @@ fn legacy_copy_running() -> bool {
     }
 }
 
+/// The running copy's receiver, unless it belongs to `skip`.
+fn receiver(skip: Option<u32>) -> Option<HWND> {
+    find(RECEIVER_CLASS, RECEIVER_TITLE).filter(|window| skip != Some(window_pid(*window)))
+}
+
 fn find(class: &str, title: &str) -> Option<HWND> {
     let (class, title) = (wide(class), wide(title));
     // SAFETY: both strings are NUL-terminated.
@@ -191,54 +195,32 @@ pub fn ready(app: &tauri::AppHandle) {
     READY.store(true, Ordering::Release);
 }
 
+/// Snippy is exiting: later launches are answered with `STARTING`, so they wait for the session to
+/// be free instead of being handed to a copy that is going away.
+pub fn closing() {
+    READY.store(false, Ordering::Release);
+}
+
 /// The receiver runs on its own thread with its own message loop, so it answers (with `STARTING`)
-/// even while the main thread is busy creating windows.
+/// even while the main thread is busy creating windows. It also hears the session and display
+/// notifications that `display_watch` keeps track of.
 fn start_receiver() {
-    let spawned = std::thread::Builder::new()
-        .name("snippy-instance-receiver".to_owned())
-        .spawn(|| {
-            let class = wide(RECEIVER_CLASS);
-            let title = wide(RECEIVER_TITLE);
-            // SAFETY: standard window-class registration and message loop on this thread.
-            unsafe {
-                let instance = GetModuleHandleW(None).unwrap_or_default();
-                let window_class = WNDCLASSEXW {
-                    cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
-                    lpfnWndProc: Some(receive),
-                    hInstance: instance.into(),
-                    lpszClassName: PCWSTR(class.as_ptr()),
-                    ..Default::default()
-                };
-                RegisterClassExW(&window_class);
-                let Ok(window) = CreateWindowExW(
-                    WINDOW_EX_STYLE(0),
-                    PCWSTR(class.as_ptr()),
-                    PCWSTR(title.as_ptr()),
-                    WS_OVERLAPPED,
-                    0,
-                    0,
-                    0,
-                    0,
-                    None,
-                    None,
-                    instance,
-                    None,
-                ) else {
-                    crate::trace::step("single instance: could not create the receiver window");
-                    return;
-                };
-                // An elevated Snippy must still hear launches from normal-integrity processes
-                // (Explorer, Win+Shift+S); only this one message is admitted, to this window.
-                let _ = ChangeWindowMessageFilterEx(window, WM_COPYDATA, MSGFLT_ALLOW, None);
-                let mut message = MSG::default();
-                while GetMessageW(&mut message, None, 0, 0).as_bool() {
-                    let _ = TranslateMessage(&message);
-                    DispatchMessageW(&message);
-                }
-            }
-        });
-    if let Err(error) = spawned {
-        crate::trace::step(&format!("single instance: no receiver thread ({error})"));
+    let started = crate::hidden_window::spawn(
+        "snippy-instance-receiver",
+        RECEIVER_CLASS,
+        RECEIVER_TITLE,
+        Some(receive),
+        |window| {
+            // An elevated Snippy must still hear launches from normal-integrity processes
+            // (Explorer, Win+Shift+S); only this one message is admitted, to this window.
+            // SAFETY: `window` is this thread's live receiver window.
+            let _ = unsafe { ChangeWindowMessageFilterEx(window, WM_COPYDATA, MSGFLT_ALLOW, None) };
+            crate::display_watch::register(window);
+        },
+        crate::display_watch::unregister,
+    );
+    if let Err(error) = started {
+        crate::trace::step(&format!("single instance: no receiver window ({error})"));
     }
 }
 
@@ -249,6 +231,8 @@ unsafe extern "system" fn receive(
     lparam: LPARAM,
 ) -> LRESULT {
     if message != WM_COPYDATA {
+        // SAFETY: these are the arguments of a message delivered to the receiver window.
+        crate::display_watch::handle(message, wparam, lparam);
         return DefWindowProcW(window, message, wparam, lparam);
     }
     let data = &*(lparam.0 as *const COPYDATASTRUCT);
@@ -281,13 +265,17 @@ unsafe extern "system" fn receive(
 
 /// The other copy is an older version, or never acknowledged: identify it, ask, and close it only
 /// when it is verifiably Snippy.
-fn recover_from_other_copy(args: &[String], legacy: bool) -> Outcome {
-    let receiver = if legacy {
+fn recover_from_other_copy(args: &[String], legacy: bool, predecessor: Option<u32>) -> Outcome {
+    // The other copy may have exited just now: no need to ask about it then.
+    if !legacy && take_mutex() {
+        return become_primary();
+    }
+    let their_window = if legacy {
         find(LEGACY_CLASS, LEGACY_TITLE)
     } else {
         find(RECEIVER_CLASS, RECEIVER_TITLE)
     };
-    let pid = receiver
+    let pid = their_window
         .map(window_pid)
         .filter(|pid| *pid != 0)
         .or_else(|| {
@@ -297,7 +285,7 @@ fn recover_from_other_copy(args: &[String], legacy: bool) -> Outcome {
         });
     let Some(pid) = pid else {
         crate::trace::step("other copy: none found any more; starting");
-        return retry_claim(args);
+        return retry_claim(args, predecessor);
     };
     let Some(process) = Verified::open(pid) else {
         crate::trace::step(&format!(
@@ -337,7 +325,7 @@ fn recover_from_other_copy(args: &[String], legacy: bool) -> Outcome {
     }
     // It may have recovered while the question was open.
     if !legacy {
-        if let Some(window) = find(RECEIVER_CLASS, RECEIVER_TITLE) {
+        if let Some(window) = receiver(predecessor) {
             if hand_over(window, args) == Some(ACCEPTED) {
                 crate::trace::step("the other copy recovered and took the launch; exiting");
                 return Outcome::Exit;
@@ -347,7 +335,7 @@ fn recover_from_other_copy(args: &[String], legacy: bool) -> Outcome {
     match process.terminate() {
         Ok(()) => {
             crate::trace::step(&format!("closed pid {pid}"));
-            retry_claim(args)
+            retry_claim(args, predecessor)
         }
         Err(error) => {
             crate::trace::step(&format!("could not close pid {pid}: {error}"));
@@ -361,12 +349,12 @@ fn recover_from_other_copy(args: &[String], legacy: bool) -> Outcome {
 }
 
 /// After the other copy is gone the session should be free; anything else is reported, not looped.
-fn retry_claim(args: &[String]) -> Outcome {
+fn retry_claim(args: &[String], predecessor: Option<u32>) -> Outcome {
     for _ in 0..10 {
         if take_mutex() {
             return become_primary();
         }
-        if let Some(window) = find(RECEIVER_CLASS, RECEIVER_TITLE) {
+        if let Some(window) = receiver(predecessor) {
             if hand_over(window, args) == Some(ACCEPTED) {
                 return Outcome::Exit;
             }

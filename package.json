@@ -1,16 +1,17 @@
 {
   "name": "snippy",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "scripts": {
     "tauri": "tauri",
     "build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-release.ps1",
-    "dev": "tauri dev"
+    "dev": "tauri dev",
+    "test:ui": "node --test tests/snap.test.js"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.10.0"
+    "@tauri-apps/cli": "^2.12.6"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.10.1"
+    "@tauri-apps/api": "^2.12.5"
   }
 }

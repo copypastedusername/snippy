@@ -40,7 +40,7 @@
       <label id="outlineOption" class="option toggle"><input id="outlineSwitch" class="switch" type="checkbox"><span>Outline</span></label>
       <label id="fillOption" class="option toggle"><input id="fillSwitch" class="switch" type="checkbox"><span>Fill</span></label>
       <div id="emojiOption" class="option">
-        <button id="emojiButton" class="btn" type="button" aria-haspopup="dialog"><span id="emojiCurrent" class="emoji-glyph">👍</span><span>Choose</span></button>
+        <button id="emojiButton" class="btn" type="button" aria-haspopup="dialog" aria-expanded="false"><span id="emojiCurrent" class="emoji-glyph">👍</span><span>Choose</span></button>
       </div>
       <div id="cropOption" class="option" hidden>
         <span class="hint">Drag to choose the area to keep.</span>
@@ -49,7 +49,7 @@
       </div>
       <div id="ocrOption" class="option" hidden>
         <label class="ocr-language"><span>Language</span><select id="ocrLanguage" class="field"></select></label>
-        <button id="copyTextButton" class="btn" type="button">Copy all text</button>
+        <button id="copyTextButton" class="btn" type="button" disabled>Copy all text</button>
         <span id="ocrStatus" class="hint"></span>
       </div>
       <span class="spacer"></span>
@@ -60,7 +60,7 @@
       <div id="sheet" class="sheet">
         <canvas id="canvas"></canvas>
         <div id="textLayer" class="text-layer" hidden></div>
-        <textarea id="textEditor" class="text-editor" spellcheck="false" hidden></textarea>
+        <textarea id="textEditor" class="text-editor" spellcheck="false" aria-label="Text" hidden></textarea>
       </div>
     </main>
 

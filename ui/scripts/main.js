@@ -20,7 +20,7 @@ let pendingWrites = 0;
 let saveQueue = Promise.resolve();
 let statusTimer = null;
 let statusKind = 'loading';
-let windowsShortcutStatus = { win_shift_s_taken: false, print_screen_taken: false, print_screen_by_windows: false, windows_build: null, closed_handler: null, closed_handler_is_snippy: false };
+let windowsShortcutStatus = { win_shift_s_taken: false, win_shift_s_hooked: false, windows_hotkey_off: false, windows_overlay: 'unsupported', print_screen_taken: false, print_screen_by_windows: false, windows_build: null, closed_handler: null, closed_handler_is_snippy: false, links_to_set: [] };
 let readyReported = false;
 /** How long the first paint waits for the recent captures before showing the window anyway. */
 const RECENTS_HEAD_START_MS = 400;
@@ -29,11 +29,18 @@ const delay = (ms) => new Promise((resolve) => { window.setTimeout(resolve, ms);
 // A hidden window may not run animation frames, so a timeout backs the frame up.
 const nextFrame = () => Promise.race([new Promise((resolve) => requestAnimationFrame(resolve)), delay(50)]);
 
+/** Startup milestones (name, ms since navigation) for the startup trace. */
+const startupStages = [];
+const markStage = (name) => { startupStages.push([name, Math.round(performance.now())]); };
+markStage('script');
+
 /** Tells the backend the panel has rendered, so it can show the (still hidden) window. */
 function reportReady() {
   if (readyReported || !window.__TAURI__?.core?.invoke) return;
   readyReported = true;
-  window.__TAURI__.core.invoke('main_ready').catch((error) => console.error('main_ready failed:', error));
+  markStage('ready');
+  window.__TAURI__.core.invoke('main_ready', { stages: startupStages })
+    .catch((error) => console.error('main_ready failed:', error));
 }
 const debounceTimers = new Map();
 const recentCaptureItems = new WeakMap();
@@ -61,6 +68,11 @@ const elements = {
   windowsNotificationsSwitch: document.getElementById('windowsNotificationsSwitch'),
   screenclipSwitch: document.getElementById('screenclipSwitch'),
   screenclipNote: document.getElementById('screenclipNote'),
+  windowsOverlayRow: document.getElementById('windowsOverlayRow'),
+  windowsOverlayNote: document.getElementById('windowsOverlayNote'),
+  windowsOverlayButton: document.getElementById('windowsOverlayButton'),
+  windowsHotkeyRow: document.getElementById('windowsHotkeyRow'),
+  windowsHotkeySwitch: document.getElementById('windowsHotkeySwitch'),
   printScreenSwitch: document.getElementById('printScreenSwitch'),
   printScreenNote: document.getElementById('printScreenNote'),
   defaultAppsNote: document.getElementById('defaultAppsNote'),
@@ -103,6 +115,8 @@ function setStatus(message, kind = 'info') {
   }
   statusKind = kind;
   elements.statusLine.textContent = message;
+  // A long message is cut off in the window; hovering shows all of it.
+  elements.statusLine.title = message;
   elements.statusLine.classList.toggle('error', kind === 'error');
 }
 
@@ -148,19 +162,28 @@ async function call(cmd, args = undefined) {
   }
 }
 
-/** Default apps differs between Windows 10 and 11: give the steps for the one in use. */
-function renderDefaultAppsSteps(build) {
+/**
+ * Default apps differs between Windows 10 and 11: give the steps for the one in use, naming each
+ * link that still opens another app.
+ */
+function renderDefaultAppsSteps(build, links) {
   const windows10 = Number.isFinite(build) && build < 22000;
+  // Link names come from Snippy itself; anything else is dropped rather than put into the HTML.
+  const known = Array.isArray(links) ? links.filter((link) => /^MS-[A-Z]+$/.test(link)) : [];
+  const names = (known.length ? known : ['MS-SCREENCLIP'])
+    .map((link) => `<b>${link}</b>`)
+    .join(' and ');
+  const each = names.includes(' and ') ? ' for each' : '';
   const steps = windows10
     ? [
         'Click <b>Open Default apps</b>.',
         'Scroll down and click <b>Choose default apps by protocol</b>.',
-        'Find <b>MS-SCREENCLIP</b>, click the app next to it and choose <b>Snippy</b>.',
+        `Find ${names}, click the app next to it and choose <b>Snippy</b>${each}.`,
       ]
     : [
         'Click <b>Open Default apps</b> — Windows opens Snippy\'s page.',
-        'Find <b>MS-SCREENCLIP</b> in the list and click the app shown next to it.',
-        'Choose <b>Snippy</b>.',
+        `Find ${names} in the list and click the app shown next to it.`,
+        `Choose <b>Snippy</b>${each}.`,
       ];
   elements.defaultAppsSteps.replaceChildren(...steps.map((html) => {
     const item = document.createElement('li');
@@ -278,15 +301,40 @@ function updateWindowsShortcuts() {
   const printScreen = Boolean(behavior.handle_print_screen);
   const handler = status.closed_handler || 'the Snipping Tool';
 
-  // Win+Shift+S: held by Windows, which opens the ms-screenclip: link with the default app.
-  const winShiftSReady = status.win_shift_s_taken || status.closed_handler_is_snippy;
+  // Win+Shift+S reaches Snippy for sure only as the ms-screenclip: link's default app: Explorer
+  // can take the key even when Snippy's own registration of it succeeded (Windows 10 does).
+  // Windows 10 ignores the link for this key; Snippy takes it with a keyboard hook there.
+  const winShiftSReady =
+    Boolean(status.closed_handler_is_snippy) || Boolean(status.win_shift_s_hooked);
   elements.screenclipNote.textContent = !winShiftS
     ? 'Snip with the Windows screenshot shortcut.'
-    : status.win_shift_s_taken
-      ? 'Windows left this key free, so Snippy handles it directly.'
-      : status.closed_handler_is_snippy
-        ? 'Windows passes this key to Snippy.'
-        : `Windows still opens ${handler}. Make Snippy the default app below.`;
+    : status.win_shift_s_hooked
+      ? 'Snippy takes this key before Windows does.'
+      : winShiftSReady
+      ? 'Windows passes this key to Snippy.'
+      : status.win_shift_s_taken
+        ? 'Snippy registered this key, but Windows may still take it first.'
+        : 'Windows takes this key first.';
+
+  // Windows 10 only: Explorer's own Win+S hotkeys can be turned off so the chord is Snippy's alone.
+  const windows10 = Number.isFinite(status.windows_build) && status.windows_build < 22000;
+  elements.windowsHotkeyRow.hidden = !(winShiftS && windows10);
+
+  // Windows 10 only: Windows' own clipping overlay can be turned off, so a Win+Shift+S press that
+  // Snippy misses opens nothing instead of Windows' overlay on top of Snippy's.
+  const overlay = status.windows_overlay;
+  // Once turned off, Restore stays on offer even with Snippy's Win+Shift+S option off.
+  elements.windowsOverlayRow.hidden = !(windows10 && overlay && overlay !== 'unsupported'
+    && (winShiftS || overlay !== 'present'));
+  const overlayTexts = {
+    present: ['Sometimes it can still open on top of Snippy. Turning it off needs administrator rights; Restore brings it back.', 'Turn off'],
+    disabled: ["Turned off: Win+Shift+S opens only Snippy. Restore brings Windows' overlay back.", 'Restore'],
+    restored_by_windows: ['A Windows update brought it back. Turn it off again if it gets in the way.', 'Turn off'],
+  };
+  const [overlayNote, overlayAction] = overlayTexts[overlay] ?? ['', 'Turn off'];
+  elements.windowsOverlayNote.textContent = overlayNote;
+  elements.windowsOverlayButton.textContent = overlayAction;
+  elements.windowsHotkeySwitch.checked = Boolean(status.windows_hotkey_off);
 
   // Print Screen: an ordinary hotkey, unless Windows' own screen capture takes the key.
   // `print_screen_by_windows` is true, false, or null when Windows does not say.
@@ -303,8 +351,10 @@ function updateWindowsShortcuts() {
   elements.keyboardSettingsButton.hidden = !(printScreen && windowsTakesPrintScreen !== false);
 
   elements.defaultAppsRow.hidden = !(winShiftS && !winShiftSReady);
-  elements.defaultAppsNote.textContent = `Windows opens ${handler} for Win+Shift+S. Make Snippy the default app for it:`;
-  renderDefaultAppsSteps(status.windows_build);
+  elements.defaultAppsNote.textContent = status.closed_handler
+    ? `Windows opens ${handler} for Win+Shift+S. Make Snippy the default app for it:`
+    : 'Make Snippy the default app for Win+Shift+S:';
+  renderDefaultAppsSteps(status.windows_build, status.links_to_set);
 
   const anyWindowsKey = winShiftS || printScreen;
   elements.windowsOnlySwitch.disabled = !anyWindowsKey;
@@ -603,12 +653,14 @@ function hotkeyError(input, message = '') {
 
 function setupHotkeyRecorder(input) {
   let confirmedValue = '';
+  // Resume waits for the pause: both run on worker threads and could otherwise swap order.
+  let paused = Promise.resolve();
 
   input.addEventListener('focus', () => {
     confirmedValue = config.hotkeys[input.dataset.hotkey] || '';
     input.value = confirmedValue;
     hotkeyError(input);
-    void call('pause_shortcuts');
+    paused = call('pause_shortcuts');
   });
 
   input.addEventListener('keydown', (event) => {
@@ -703,6 +755,7 @@ function setupHotkeyRecorder(input) {
 
   input.addEventListener('blur', async () => {
     if (input.value.endsWith('+...') || input.value !== confirmedValue) input.value = confirmedValue;
+    await paused;
     await saveQueue;
     await call('resume_shortcuts');
   });
@@ -739,6 +792,23 @@ function bindConfigControls() {
   bindWindowsShortcut(elements.windowsOnlySwitch, 'windows_shortcuts_only');
   elements.defaultAppsButton.addEventListener('click', () => { void call('open_default_apps'); });
   elements.keyboardSettingsButton.addEventListener('click', () => { void call('open_keyboard_settings'); });
+  elements.windowsOverlayButton.addEventListener('click', async () => {
+    const disable = windowsShortcutStatus.windows_overlay !== 'disabled';
+    elements.windowsOverlayButton.disabled = true;
+    try {
+      const result = await call('set_windows_overlay_disabled', { disabled: disable });
+      if (result !== INVOKE_FAILED && (result === 'disabled') === disable) {
+        setStatus(disable ? "Windows' snipping overlay is turned off" : "Windows' snipping overlay is back", 'success');
+      }
+      await refreshWindowsShortcutStatus();
+    } finally {
+      elements.windowsOverlayButton.disabled = false;
+    }
+  });
+  elements.windowsHotkeySwitch.addEventListener('change', async () => {
+    await call('set_windows_hotkey_off', { off: elements.windowsHotkeySwitch.checked });
+    await refreshWindowsShortcutStatus();
+  });
   elements.cursorSwitch.addEventListener('change', () => { config.capture.include_cursor = elements.cursorSwitch.checked; void saveConfig(); });
   elements.soundSelect.addEventListener('change', () => {
     config.capture.sound = elements.soundSelect.value;
@@ -899,14 +969,17 @@ async function initialize() {
   bindUi();
 
   const loadedConfig = await call('get_config');
+  markStage('config');
   if (loadedConfig === INVOKE_FAILED) return;
   config = loadedConfig;
   renderConfig(false);
+  markStage('render');
 
   // Show the window once the panel is painted; recents get a short head start so the grid does not
   // pop in right after the window appears. Slower checks (autostart runs schtasks) come after.
   const recentsLoaded = refreshRecents();
   await Promise.race([recentsLoaded, delay(RECENTS_HEAD_START_MS)]);
+  markStage('recents');
   await nextFrame();
   reportReady();
   void refreshWindowsShortcutStatus();
@@ -929,6 +1002,10 @@ async function initialize() {
 
   await recentsLoaded;
   if (statusKind !== 'error') showIdleStatus();
+
+  // Settings Snippy had to reset at start stay on screen until the next status replaces them.
+  const recovery = await call('config_recovery');
+  if (typeof recovery === 'string' && recovery) setStatus(recovery, 'error');
 }
 
 initialize()

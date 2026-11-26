@@ -44,17 +44,33 @@ Pause and Scroll Lock, which may be used alone.
 While choosing an area, `1`–`4` switch between rectangle, free-form, window and full-screen,
 `Ctrl+A` selects the whole monitor in rectangle mode, `Enter` takes the snip, and `Escape` or a
 right-click cancels. In window mode, `Tab` and `Shift+Tab` step through windows stacked under the
-pointer. Hold `Alt` while dragging a rectangle to snap its sides to the nearest edges on
-screen (window borders, buttons, the edge of a picture) within 10 pixels; a thin border line is taken
-inside the snip, and sides with no clear edge nearby stay where you put them.
+pointer. While dragging a rectangle:
+
+- `Shift` keeps a proper proportion: the nearest of 1:1, 4:3, 3:2, 16:10, 16:9 and 21:9 (or their
+  upright forms), with whole-pixel sides; the size badge names it.
+- `Alt` snaps the sides to the nearest edges on screen: window borders, panels, buttons, the edge of
+  a picture, including soft and coloured edges and edges that cover only part of a side. The reach
+  grows with the display scale (10 px at 100 %), a snapped side is drawn thicker and holds its edge
+  until you clearly move away, and sides with no clear edge nearby stay where you put them.
+- `Alt+Shift` keeps the proportion and snaps the moving corner's sides only to edges that keep it
+  exact.
 
 ### Win+Shift+S and Print Screen
 
 Settings → Windows shortcuts:
 
-- **Win+Shift+S**: Windows sends this key to its default screen-capture app. Snippy registers as
-  one; pick it once in Default apps (the settings page opens it and shows the steps). Where the key
-  is free, as on some trimmed Windows builds, Snippy takes it directly.
+- **Win+Shift+S**: on Windows 11 the key opens the default screen-capture app. Snippy registers
+  as one; pick it once in Default apps (the settings page opens it and shows the steps). Windows 10
+  ignores that choice for this key, so there Snippy takes Win+Shift+S itself with a keyboard hook,
+  as PowerToys does; nothing to set up, and Win+S still opens Search. If the Snipping Tool still
+  opens now and then, turn on **Turn off Windows' own Win+Shift+S** and sign out and back in:
+  Windows then leaves the key to Snippy (Win+S Search turns off with it). Where the key is free, as
+  on some trimmed Windows builds, Snippy takes it directly.
+- **Windows' own snipping overlay (Windows 10)**: in the rare case Windows still opens its
+  overlay on top of Snippy's, **Turn off** in Settings switches it off (administrator rights are
+  asked for once) and **Restore** brings it back. Snippy renames only Windows' overlay program and
+  leaves its owner and permissions as Windows set them. A Windows update may bring it back; the
+  settings page then says so.
 - **Print Screen**: if Windows' own "Use the Print Screen key to open screen capture" is on, turn it
   off in Keyboard settings (the settings page links there). Alt+PrtScn and Win+PrtScn keep working
   as in Windows.
@@ -131,17 +147,15 @@ anyway; Windows Security → Protection history shows whether Defender stopped i
 
 ## Updates
 
-Snippy checks the latest release of this repository. It offers the release when its version is
-newer, or when the version is the same but the exe differs from the running one (compared by the
-SHA-256 that GitHub reports), so a fix published without a new version number still reaches
-everyone.
+Snippy checks the latest release of this repository and offers it whenever its exe differs from
+the running one (compared by the SHA-256 that GitHub reports). The version number does not decide:
+a fix published under the same number, or a release with a lower number, still reaches everyone.
 
 A release carries `snippy.exe` and `snippy.exe.sig`; the exe is installed only if its signature
-matches the key compiled into Snippy, its hash matches the release, and its own version is the
-offered one and not older than the running copy, so neither a tampered nor an older build is
-accepted. Installing renames the running exe to `snippy.exe.old`, puts the new one
-in its place and restarts; the new copy deletes the leftover. If the exe sits in a folder Snippy
-cannot write to, it says so instead.
+matches the key compiled into Snippy, its hash matches the release, and its own version is the one
+the release names, so a tampered build is never accepted. Installing renames the running exe to
+`snippy.exe.old`, puts the new one in its place and restarts; the new copy deletes the leftover.
+If the exe sits in a folder Snippy cannot write to, it says so instead.
 
 ## Building from source
 
@@ -164,6 +178,8 @@ cd src-tauri
 cargo run
 cargo test
 ```
+
+The selection helpers in `ui/scripts/snap.js` have their own tests: `npm run test:ui` (Node 18+).
 
 To keep build output on another drive, set `$env:CARGO_TARGET_DIR` before building.
 
@@ -200,7 +216,7 @@ To keep build output on another drive, set `$env:CARGO_TARGET_DIR` before buildi
 | `src-tauri/icons/icon.png` | Source of the app and tray icon; the other files in `icons/` are generated from it. |
 | `ui/index.html`, `ui/scripts/main.js`, `ui/styles/main.css` | Main panel and settings. |
 | `ui/overlay.html`, `ui/scripts/overlay.js`, `ui/styles/overlay.css` | The area-selection overlay. |
-| `ui/scripts/snap.js` | Snapping a selection to edges in the frame (Alt while dragging). |
+| `ui/scripts/snap.js` | Rectangle drags: proportions (Shift) and snapping to edges and windows (Alt). |
 | `ui/flyout.html`, `ui/scripts/flyout.js`, `ui/styles/flyout.css` | The preview and update offer. |
 | `ui/editor.html`, `ui/scripts/editor.js`, `ui/styles/editor.css` | The editor. |
 | `ui/styles/theme.css` | Shared colours and controls. |

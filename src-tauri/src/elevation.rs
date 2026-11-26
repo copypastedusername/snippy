@@ -44,6 +44,45 @@ pub fn is_elevated() -> Result<bool, String> {
     Ok(elevation.TokenIsElevated != 0)
 }
 
+/// Hands this start over to an elevated copy when "Run as administrator" is on and this process
+/// is not elevated. Returns true when this process should exit.
+pub fn hand_over_if_configured(config: &crate::config::Config) -> bool {
+    if !config.behavior.run_as_admin {
+        return false;
+    }
+    match is_elevated() {
+        Ok(false) => hand_over(),
+        Ok(true) => false,
+        Err(error) => {
+            log::warn!("Could not determine elevation status: {error}");
+            false
+        }
+    }
+}
+
+/// Starts an elevated copy: through the logon task when it starts this exe (no prompt), else
+/// through a UAC prompt. False when neither started one, so this copy carries on unelevated.
+fn hand_over() -> bool {
+    match crate::autostart::run_elevated_task_for_this_exe() {
+        Ok(true) => return true,
+        Ok(false) => crate::trace::step("no logon task for this exe; asking Windows to elevate"),
+        Err(error) => crate::trace::step(&format!(
+            "logon task unusable ({error}); asking Windows to elevate"
+        )),
+    }
+    match relaunch_elevated() {
+        Ok(true) => true,
+        Ok(false) => {
+            log::warn!("Elevation was declined; continuing without administrator rights");
+            false
+        }
+        Err(error) => {
+            log::warn!("Could not relaunch elevated: {error}");
+            false
+        }
+    }
+}
+
 pub fn relaunch_elevated() -> Result<bool, String> {
     let executable = std::env::current_exe()
         .map_err(|error| format!("Failed to determine the executable path: {error}"))?;
@@ -69,6 +108,15 @@ pub fn relaunch_elevated() -> Result<bool, String> {
 /// Run a program elevated and wait for it to finish. Used for the one-off privileged operations
 /// (registering or deleting the logon task) that a medium-integrity process cannot perform.
 pub fn run_elevated_and_wait(program: &str, arguments: &[&str]) -> Result<(), String> {
+    match run_elevated_for_code(program, arguments)? {
+        0 => Ok(()),
+        code => Err(format!("Elevated helper failed with exit code {code}")),
+    }
+}
+
+/// Runs a program elevated, waits for it and returns its exit code. Declining the UAC prompt is
+/// reported as such.
+pub fn run_elevated_for_code(program: &str, arguments: &[&str]) -> Result<i32, String> {
     let program: Vec<u16> = wide(program);
     let parameters: Vec<u16> = wide(&quote_arguments(arguments));
     let verb: Vec<u16> = wide("runas");
@@ -82,10 +130,15 @@ pub fn run_elevated_and_wait(program: &str, arguments: &[&str]) -> Result<(), St
         ..Default::default()
     };
     unsafe { ShellExecuteExW(&mut info) }.map_err(|error| {
-        format!(
-            "Windows refused to elevate {}: {error}",
-            info_file(&program)
-        )
+        // ERROR_CANCELLED: the user said no to the UAC prompt.
+        if error.code() == windows::Win32::Foundation::ERROR_CANCELLED.to_hresult() {
+            "Administrator rights were not given".to_owned()
+        } else {
+            format!(
+                "Windows refused to elevate {}: {error}",
+                info_file(&program)
+            )
+        }
     })?;
     if info.hProcess.is_invalid() {
         return Err("Elevated helper did not start".to_owned());
@@ -95,11 +148,11 @@ pub fn run_elevated_and_wait(program: &str, arguments: &[&str]) -> Result<(), St
     let mut code = 0_u32;
     unsafe { GetExitCodeProcess(process.0, &mut code) }
         .map_err(|error| format!("Could not read the elevated exit code: {error}"))?;
-    if code == 0 {
-        Ok(())
-    } else {
-        Err(format!("Elevated helper failed with exit code {code}"))
+    // STILL_ACTIVE: it did not finish within the wait.
+    if code == 259 {
+        return Err("The elevated helper did not finish in time".to_owned());
     }
+    Ok(code as i32)
 }
 
 /// A native Yes/No question, for problems that occur before any WebView exists.

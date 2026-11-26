@@ -34,8 +34,14 @@ const state = {
   dragPointerId: null,
   clickPointerId: null,
   dragStart: null,
-  // Alt held while dragging a rectangle: its sides snap to edges in the frame (snap.js).
-  snapping: false,
+  // Modifiers held while dragging a rectangle (snap.js): Alt snaps its sides to edges, Shift keeps
+  // a common proportion. `dragMemory` carries the held edges and proportion between moves;
+  // `dragInfo` is what the last resolve applied, for the badge and the snapped-side marks.
+  dragKeys: { alt: false, shift: false },
+  dragMemory: null,
+  dragInfo: null,
+  // The frozen frame prepared for snapping (pixels, visible window faces, monitor scales).
+  snapFrame: null,
   rectangle: null,
   freeformPoints: [],
   hoveredWindow: null,
@@ -225,17 +231,35 @@ function updateHover(point) {
   state.hoveredMonitor = monitorAt(point);
 }
 
-/** The rectangle being dragged, snapped to visible edges while Alt is held. */
+/** The rectangle being dragged: proportional with Shift, snapped to edges with Alt (snap.js). */
 function dragRectangle(end) {
-  const rectangle = normalizedRectangle(state.dragStart, end);
-  if (!state.snapping || !state.framePixels || !state.meta) {
-    return rectangle;
+  if (!state.snapFrame || !state.dragStart) {
+    state.dragInfo = null;
+    return normalizedRectangle(state.dragStart ?? end, end);
   }
-  return snapRectangle(rectangle, {
-    pixels: state.framePixels,
-    width: state.meta.width,
-    height: state.meta.height,
+  const result = resolveRectangleDrag(state.snapFrame, {
+    anchor: state.dragStart,
+    pointer: end,
+    alt: state.dragKeys.alt,
+    shift: state.dragKeys.shift,
+    previous: state.dragMemory,
   });
+  state.dragMemory = result.next;
+  state.dragInfo = result;
+  return result.rect;
+}
+
+/** The badge text for the rectangle: its size, the proportion kept and whether it snapped. */
+function rectangleBadgeText(rectangle) {
+  const info = isDragging() ? state.dragInfo : null;
+  const parts = [String(rectangle.width) + ' × ' + String(rectangle.height)];
+  if (info?.ratio) {
+    parts.push(info.ratio.label);
+  }
+  if (info && Object.values(info.snappedSides).some(Boolean)) {
+    parts.push('snapped');
+  }
+  return parts.join('  ·  ');
 }
 
 function normalizedRectangle(first, second) {
@@ -329,7 +353,34 @@ function drawSelectionBorder(rectangle) {
     cssRect.width + 3,
     cssRect.height + 3,
   );
+  drawSnappedSides(cssRect);
   context.restore();
+}
+
+/** A thicker line on each side that snapped to an edge, so it reads without relying on colour. */
+function drawSnappedSides(cssRect) {
+  const sides = isDragging() ? state.dragInfo?.snappedSides : null;
+  if (!sides) {
+    return;
+  }
+  const { x, y, width, height } = cssRect;
+  const lines = {
+    left: [x, y, x, y + height],
+    right: [x + width, y, x + width, y + height],
+    top: [x, y, x + width, y],
+    bottom: [x, y + height, x + width, y + height],
+  };
+  context.strokeStyle = state.accent;
+  context.lineWidth = 4;
+  context.lineCap = 'square';
+  for (const [side, [x1, y1, x2, y2]] of Object.entries(lines)) {
+    if (sides[side]) {
+      context.beginPath();
+      context.moveTo(x1, y1);
+      context.lineTo(x2, y2);
+      context.stroke();
+    }
+  }
 }
 
 function beginCssFreeformPath(points) {
@@ -684,11 +735,7 @@ function redraw() {
   if (state.mode === 'rectangle' && state.rectangle) {
     revealRectangle(state.rectangle);
     drawSelectionBorder(state.rectangle);
-    selectionBadge = layoutSelectionBadge(
-      state.rectangle,
-      String(state.rectangle.width) + ' × ' + String(state.rectangle.height)
-        + (state.snapping ? '  ·  snapped' : ''),
-    );
+    selectionBadge = layoutSelectionBadge(state.rectangle, rectangleBadgeText(state.rectangle));
     drawBadge(selectionBadge);
   } else if (state.mode === 'freeform' && state.freeformPoints.length > 1) {
     revealFreeform(state.freeformPoints);
@@ -731,7 +778,9 @@ function clearSelection() {
   state.dragStart = null;
   state.rectangle = null;
   state.freeformPoints = [];
-  state.snapping = false;
+  state.dragKeys = { alt: false, shift: false };
+  state.dragMemory = null;
+  state.dragInfo = null;
 }
 
 function updateModeControls() {
@@ -908,7 +957,7 @@ document.addEventListener('pointermove', (event) => {
 
   if (event.pointerId === state.dragPointerId && state.dragStart) {
     if (state.mode === 'rectangle') {
-      state.snapping = event.altKey;
+      state.dragKeys = { alt: event.altKey, shift: event.shiftKey };
       state.rectangle = dragRectangle(state.pointerEdge);
     } else if (state.mode === 'freeform') {
       const previous = state.freeformPoints[state.freeformPoints.length - 1];
@@ -935,9 +984,11 @@ canvas.addEventListener('pointerup', (event) => {
     state.dragPointerId = null;
 
     if (state.mode === 'rectangle' && state.dragStart) {
-      state.snapping = event.altKey;
+      state.dragKeys = { alt: event.altKey, shift: event.shiftKey };
       state.rectangle = dragRectangle(state.pointerEdge);
-      state.snapping = false;
+      state.dragKeys = { alt: false, shift: false };
+      state.dragMemory = null;
+      state.dragInfo = null;
       finishRectangle(state.rectangle);
     } else if (state.mode === 'freeform') {
       const previous = state.freeformPoints[state.freeformPoints.length - 1];
@@ -971,17 +1022,19 @@ document.addEventListener('contextmenu', (event) => {
   cancelSnip();
 });
 
-/** Pressing or releasing Alt mid-drag re-snaps at once, without waiting for the pointer to move. */
+/** Pressing or releasing Alt or Shift mid-drag applies at once, without waiting for the pointer. */
 function updateSnapping(event) {
-  if (event.key !== 'Alt') {
+  if (event.key !== 'Alt' && event.key !== 'Shift') {
     return;
   }
-  // Alt alone would otherwise hand the keyboard to the (invisible) window menu.
-  event.preventDefault();
+  if (event.key === 'Alt') {
+    // Alt alone would otherwise hand the keyboard to the (invisible) window menu.
+    event.preventDefault();
+  }
   if (state.mode !== 'rectangle' || !isDragging() || !state.dragStart || !state.pointerEdge) {
     return;
   }
-  state.snapping = event.type === 'keydown';
+  state.dragKeys = { alt: event.altKey, shift: event.shiftKey };
   state.rectangle = dragRectangle(state.pointerEdge);
   requestRedraw();
 }
@@ -1091,6 +1144,7 @@ function releaseFrame() {
   state.refreshSequence += 1;
   clearSelection();
   state.frameCanvas = null;
+  state.snapFrame = null;
   state.framePixels = null;
   state.pointerImage = null;
   state.pointerEdge = null;
@@ -1138,6 +1192,14 @@ async function refreshOverlay(isInitialLoad = false) {
     };
     state.frameCanvas = nextFrame;
     state.framePixels = imageData.data;
+    state.snapFrame = prepareSnapFrame({
+      pixels: imageData.data,
+      width,
+      height,
+      windows: state.meta.windows,
+      monitors: state.meta.monitors,
+      scale: meta.scale,
+    });
     state.mode = MODES.has(meta.mode) ? meta.mode : 'rectangle';
     state.pointerImage = null;
     state.pointerCss = null;

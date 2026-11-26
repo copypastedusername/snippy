@@ -2,8 +2,8 @@
 //!
 //! A portable, unpackaged app may show toasts once its AppUserModelID is described under
 //! `HKCU\Software\Classes\AppUserModelId`. Buttons and clicks use protocol activation: Windows
-//! opens a `snippy://` link, which starts `snippy.exe <link>`; the single-instance plugin forwards
-//! that to the running Snippy (see `handle_link`). No COM activator or Start-menu shortcut needed.
+//! opens a `snippy://` link, which starts `snippy.exe <link>`; that launch is handed to the running
+//! Snippy's receiver (see `instances.rs`), which follows the link (see `handle_link`). No COM activator or Start-menu shortcut needed.
 
 use crate::capture::CaptureResult;
 use crate::{winreg, AppState};
@@ -174,10 +174,13 @@ pub fn handle_link(app: &tauri::AppHandle, action: LinkAction) {
             .and_then(|config| crate::storage::resolve_capture(&path, &config.output.directory))
             .and_then(|path| crate::storage::reveal(&path)),
         LinkAction::Update => {
-            // Only a signed, newer release can be installed, so a stray link cannot do harm.
+            // The link only asks to install the latest release, which is verified as usual.
             let app = app.clone();
-            std::thread::spawn(move || {
-                if let Err(error) = crate::updater::install(&app) {
+            std::thread::spawn(move || match crate::updater::install(&app) {
+                Ok(()) => {}
+                // A second click while the first install runs: that one reports for both.
+                Err(error) if error == crate::updater::ALREADY_INSTALLING => {}
+                Err(error) => {
                     log::warn!("Update failed: {error}");
                     if let Err(error) = show_failure_titled("Update failed", &error) {
                         log::warn!("Could not report the failed update: {error}");
